@@ -31,8 +31,12 @@ jobs:
 
       - name: Replace repository contents
         run: |
+          cp .github/workflows/bootstrap-reddit-toolbox.yml "$RUNNER_TEMP/bootstrap-reddit-toolbox.yml"
           find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
           rsync -a --exclude=.git "$RUNNER_TEMP/reddit-toolbox-source/" ./
+          rm -rf .github/workflows
+          mkdir -p .github/workflows
+          cp "$RUNNER_TEMP/bootstrap-reddit-toolbox.yml" .github/workflows/bootstrap-reddit-toolbox.yml
 
       - name: Rewrite repository references
         run: |
@@ -53,7 +57,7 @@ jobs:
           }
 
           for path in Path(".").rglob("*"):
-              if not path.is_file() or ".git" in path.parts:
+              if not path.is_file() or ".git" in path.parts or path.parts[:2] == (".github", "workflows"):
                   continue
               try:
                   original = path.read_text(encoding="utf-8")
@@ -71,7 +75,7 @@ jobs:
           npm ci
           npm run check
           git diff --check
-          if grep -RIl --exclude-dir=.git \
+          if grep -RIl --exclude-dir=.git --exclude-dir=workflows \
             -e 'Insta-Toolbox/reddit-toolbox-v1-rc1' \
             -e 'Insta-Toolbox/reddit-toolbox-rc1' .; then
             echo "A legacy install path remains." >&2
