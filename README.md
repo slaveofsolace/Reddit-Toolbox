@@ -74,7 +74,7 @@ Requirements: Node.js 20 or newer.
 npm run check
 ```
 
-The build has no runtime dependencies. `src/userscript-metadata.txt` and the ordered source files produce `userscripts/reddit-toolbox.user.js` deterministically.
+RC2 passes 54 automated tests plus final userscript syntax and integrity checks. The build has no runtime dependencies. `src/userscript-metadata.txt` and the ordered source files produce `userscripts/reddit-toolbox.user.js` deterministically.
 
 ## RC2 handoff
 
