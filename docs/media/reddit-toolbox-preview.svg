@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="750" viewBox="0 0 1200 750" role="img" aria-labelledby="title desc">
+  <title id="title">Reddit Toolbox RC1 interface preview</title>
+  <desc id="desc">A Reddit-style browser page with the Reddit Toolbox panel showing Scope, Review, and Run steps.</desc>
+  <rect width="1200" height="750" fill="#f6f7f8"/>
+  <rect x="0" y="0" width="1200" height="64" fill="#ffffff"/>
+  <circle cx="36" cy="32" r="18" fill="#ff4500"/>
+  <text x="66" y="40" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="22" font-weight="700" fill="#1c1c1c">reddit</text>
+  <rect x="250" y="16" width="470" height="34" rx="17" fill="#f0f2f3"/>
+  <rect x="55" y="105" width="650" height="128" rx="14" fill="#ffffff" stroke="#d6d9dc"/>
+  <rect x="76" y="128" width="72" height="10" rx="5" fill="#d6d9dc"/>
+  <rect x="76" y="153" width="405" height="15" rx="7" fill="#576f76" opacity=".72"/>
+  <rect x="76" y="182" width="555" height="9" rx="4" fill="#d6d9dc"/>
+  <rect x="55" y="255" width="650" height="128" rx="14" fill="#ffffff" stroke="#d6d9dc"/>
+  <rect x="76" y="278" width="90" height="10" rx="5" fill="#d6d9dc"/>
+  <rect x="76" y="303" width="360" height="15" rx="7" fill="#576f76" opacity=".72"/>
+  <rect x="76" y="332" width="510" height="9" rx="4" fill="#d6d9dc"/>
+  <rect x="735" y="82" width="425" height="626" rx="18" fill="#ffffff" stroke="#d6d9dc" stroke-width="2"/>
+  <rect x="735" y="82" width="425" height="72" rx="18" fill="#ffffff"/>
+  <line x1="735" y1="154" x2="1160" y2="154" stroke="#d6d9dc"/>
+  <text x="759" y="116" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="20" font-weight="750" fill="#1c1c1c">Reddit Toolbox</text>
+  <text x="759" y="137" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="12" fill="#576f76">Local cleanup · RC1</text>
+  <circle cx="1123" cy="118" r="16" fill="#f6f7f8"/>
+  <path d="M1117 112l12 12m0-12l-12 12" stroke="#576f76" stroke-width="2"/>
+  <rect x="757" y="173" width="381" height="54" rx="10" fill="#fff4ed" stroke="#ffd6ae"/>
+  <text x="772" y="194" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="12" fill="#7a2e0e">Deletion is permanent. Review the preview first.</text>
+  <text x="772" y="211" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="12" fill="#7a2e0e">Eligible text is overwritten, verified, then deleted.</text>
+  <text x="757" y="260" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="15" font-weight="700" fill="#1c1c1c">1. Scope</text>
+  <text x="1071" y="260" text-anchor="end" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11" fill="#576f76">Choose what can be touched</text>
+  <rect x="757" y="278" width="16" height="16" rx="3" fill="#ff4500"/>
+  <path d="M761 286l4 4 7-9" fill="none" stroke="#fff" stroke-width="2"/>
+  <text x="782" y="291" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="13" fill="#1c1c1c">Comments</text>
+  <rect x="880" y="278" width="16" height="16" rx="3" fill="#ff4500"/>
+  <path d="M884 286l4 4 7-9" fill="none" stroke="#fff" stroke-width="2"/>
+  <text x="905" y="291" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="13" fill="#1c1c1c">Posts</text>
+  <text x="757" y="325" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11" font-weight="650" fill="#576f76">Time frame</text>
+  <rect x="757" y="334" width="381" height="38" rx="8" fill="#ffffff" stroke="#d6d9dc"/>
+  <text x="770" y="358" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="13" fill="#1c1c1c">All available history</text>
+  <path d="M1119 349l6 7 6-7" fill="none" stroke="#576f76" stroke-width="2"/>
+  <text x="757" y="400" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11" font-weight="650" fill="#576f76">Maximum items</text>
+  <rect x="757" y="409" width="181" height="38" rx="8" fill="#ffffff" stroke="#d6d9dc"/>
+  <text x="770" y="433" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="13" fill="#8a969b">0 = all</text>
+  <text x="958" y="400" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="11" font-weight="650" fill="#576f76">Process order</text>
+  <rect x="958" y="409" width="180" height="38" rx="8" fill="#ffffff" stroke="#d6d9dc"/>
+  <text x="971" y="433" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="13" fill="#1c1c1c">Oldest first</text>
+  <rect x="757" y="467" width="112" height="38" rx="19" fill="#ff4500"/>
+  <text x="813" y="491" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="13" font-weight="700" fill="#ffffff">Scan profile</text>
+  <rect x="879" y="467" width="137" height="38" rx="19" fill="#ffffff" stroke="#d6d9dc"/>
+  <text x="947" y="491" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="13" font-weight="700" fill="#1c1c1c">Import archive</text>
+  <rect x="1026" y="467" width="112" height="38" rx="19" fill="#ffffff" stroke="#d6d9dc"/>
+  <text x="1082" y="491" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="13" font-weight="700" fill="#1c1c1c">Preview</text>
+  <text x="757" y="542" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="15" font-weight="700" fill="#1c1c1c">2. Review</text>
+  <rect x="757" y="558" width="86" height="55" rx="9" fill="#f6f7f8"/>
+  <text x="769" y="582" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="18" font-weight="700" fill="#1c1c1c">128</text>
+  <text x="769" y="601" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="10" fill="#576f76">Found</text>
+  <rect x="852" y="558" width="86" height="55" rx="9" fill="#f6f7f8"/>
+  <text x="864" y="582" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="18" font-weight="700" fill="#1c1c1c">24</text>
+  <text x="864" y="601" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="10" fill="#576f76">Selected</text>
+  <rect x="947" y="558" width="86" height="55" rx="9" fill="#f6f7f8"/>
+  <text x="959" y="582" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="18" font-weight="700" fill="#1c1c1c">18</text>
+  <text x="959" y="601" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="10" fill="#576f76">Comments</text>
+  <rect x="1042" y="558" width="96" height="55" rx="9" fill="#f6f7f8"/>
+  <text x="1054" y="582" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="18" font-weight="700" fill="#1c1c1c">6</text>
+  <text x="1054" y="601" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="10" fill="#576f76">Posts</text>
+  <text x="757" y="649" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="15" font-weight="700" fill="#1c1c1c">3. Run</text>
+  <rect x="757" y="664" width="250" height="30" rx="15" fill="#b42318"/>
+  <text x="882" y="684" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="12" font-weight="700" fill="#ffffff">Type confirmation to start cleanup</text>
+  <circle cx="1136" cy="686" r="26" fill="#ff4500"/>
+  <text x="1136" y="691" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="13" font-weight="800" fill="#ffffff">RT</text>
+</svg>

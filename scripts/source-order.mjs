@@ -1,0 +1,20 @@
+export const sourceOrder = [
+  'src/core/namespace.js',
+  'src/core/errors.js',
+  'src/core/random.js',
+  'src/core/csv.js',
+  'src/core/filters.js',
+  'src/core/plan.js',
+  'src/core/runner.js',
+  'src/core/storage.js',
+  'src/reddit/model.js',
+  'src/reddit/api.js',
+  'src/reddit/scanner.js',
+  'src/reddit/removal-service.js',
+  'src/ui/styles.js',
+  'src/ui/template.js',
+  'src/ui/app.js',
+  'src/ui/scope.js',
+  'src/ui/run.js',
+  'src/main.js'
+];
