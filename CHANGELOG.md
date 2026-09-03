@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Bind review to the account as well as exact ordered targets and destructive settings; freeze the selected targets during execution.
+- Pause before the next mutation after settling the active operation, with account, ownership, and replacement checks before deletion.
+- Preserve uncertain mutation state across new reviews in the same tab. Missing listings, mismatched targets, malformed responses, and moderation removal do not prove deletion.
+- Require a cross-tab Web Lock and one canonical mutation origin; block execution when exclusion cannot be established.
+- Parse large archives incrementally, validate their headers and explicit IDs, report rejected/duplicate rows, and keep preview rendering bounded.
+- Collapse Advanced controls, retain launcher completion, correct coverage disclosure, and sanitize exported run logs.
+- Add generated-script and Chromium/Firefox fixture regressions; generate and verify checksums with the deterministic build.
+- Disable the provisional live session adapter by default pending Reddit approval and OAuth setup. No new release or authenticated acceptance is claimed.
+
 ## 1.0.0-rc.2 — 2026-09-03
 
 - Reworked cleanup into a one-confirmation automated batch, matching the hands-off behavior of Insta Toolbox DM Unsend.

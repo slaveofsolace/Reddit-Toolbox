@@ -7,9 +7,9 @@
     constructor(client, options = {}) {
       this.client = client;
       this.deleteUneditablePosts = options.deleteUneditablePosts === true;
-      this.verifyOverwrite = options.verifyOverwrite !== false;
-      this.verifyOwnership = options.verifyOwnership !== false;
-      this.verifyDeletion = options.verifyDeletion !== false;
+      this.verifyOverwrite = true;
+      this.verifyOwnership = true;
+      this.verifyDeletion = true;
       this.replacementLength = Math.max(8, Math.min(128, Number(options.replacementLength) || 24));
       this.minimumSettleMs = Math.max(250, Number(options.minimumSettleMs) || 900);
       this.maximumSettleMs = Math.max(this.minimumSettleMs, Number(options.maximumSettleMs) || 1_500);
@@ -62,7 +62,12 @@
     }
 
     async ensureOwnership(item, state) {
-      if (!this.verifyOwnership || state.ownershipVerified) return;
+      if (typeof this.client.inspectTarget === 'function') {
+        const target = await this.client.inspectTarget(item.fullname);
+        if (!target.available || !target.owned) throw new Core.ApiError('Ownership could not be verified.', { code: 'OWNERSHIP_NOT_VERIFIED' });
+        if (target.editable !== (item.editable !== false)) throw new Core.ApiError('Live editability differs from the reviewed batch. Prepare a new review.', { code: 'EDITABILITY_CHANGED' });
+        return;
+      }
       if (typeof this.client.verifyOwnership !== 'function') {
         throw new Core.ApiError('The Reddit adapter cannot verify item ownership.', {
           code: 'OWNERSHIP_CHECK_UNAVAILABLE'
@@ -91,15 +96,21 @@
           { code: 'DELETE_RESULT_UNCERTAIN' }
         );
       }
-      this.states.delete(item.fullname);
+      state.completed = true;
       return true;
     }
 
     isAmbiguousMutationError(error) {
-      return error?.code === 'NETWORK_ERROR' || (error?.retryable && Number(error?.status) >= 500);
+      return ['NETWORK_ERROR', 'RESPONSE_LOST', 'INVALID_JSON', 'UNRECOGNIZED_RESPONSE'].includes(error?.code)
+        || Number(error?.status) >= 500
+        || !(error instanceof Core.ToolboxError);
     }
 
     async remove(item, context = {}) {
+      const prefix = item?.kind === 'comment' ? 't1' : item?.kind === 'post' ? 't3' : '';
+      if (!prefix || !new RegExp(`^${prefix}_[a-z0-9]+$`).test(item.fullname)) {
+        throw new Core.ApiError('The item does not have a valid exact content ID.', { code: 'INVALID_TARGET' });
+      }
       const directDelete = item.kind === 'post' && item.editable === false;
       if (directDelete && !this.deleteUneditablePosts) {
         this.report(context, 'skipped', { reason: 'post-has-no-editable-body' });
@@ -112,6 +123,7 @@
       }
 
       const state = this.stateFor(item.fullname);
+      if (state.completed) return { status: 'skipped', reason: 'already-completed', deleted: true };
       if (state.deleteSent) {
         this.report(context, 'verifying-deletion');
         await this.verifyDeleted(item, state);
@@ -130,6 +142,9 @@
       await this.ensureOwnership(item, state);
 
       if (directDelete) {
+        await context.beforeMutation?.();
+        await this.ensureSession(context);
+        await this.ensureOwnership(item, state);
         this.report(context, 'deleting-direct');
         state.deleteSent = true;
         try {
@@ -163,10 +178,13 @@
           () => this.client.verifyText(item.fullname, state.replacement)
         );
         if (alreadySaved) state.edited = true;
-        else state.editSent = false;
+        else throw new Core.PauseRequiredError('The previous overwrite remains uncertain. No edit or delete was repeated.', { code: 'OVERWRITE_RESULT_UNCERTAIN' });
       }
 
       if (!state.edited) {
+        await context.beforeMutation?.();
+        await this.ensureSession(context);
+        await this.ensureOwnership(item, state);
         this.report(context, 'overwriting');
         state.editSent = true;
         try {
@@ -182,8 +200,7 @@
             () => this.client.verifyText(item.fullname, state.replacement)
           );
           if (!saved) {
-            state.editSent = false;
-            throw error;
+            throw new Core.PauseRequiredError('The overwrite may have been sent, but its saved text cannot be confirmed. No delete was sent.', { code: 'OVERWRITE_RESULT_UNCERTAIN' });
           }
           state.edited = true;
         }
@@ -199,13 +216,19 @@
           () => this.client.verifyText(item.fullname, state.replacement)
         );
         if (!verified) {
-          throw new Core.ApiError('The overwrite could not be verified, so the item was not deleted.', {
+          throw new Core.PauseRequiredError('The overwrite could not be verified, so the item was not deleted.', {
             code: 'OVERWRITE_NOT_VERIFIED',
-            retryable: true
           });
         }
       }
 
+      await context.beforeMutation?.();
+      await this.ensureSession(context);
+      await this.ensureOwnership(item, state);
+      // A pause can last arbitrarily long; verify again at the deletion boundary.
+      if (!await this.client.verifyText(item.fullname, state.replacement)) {
+        throw new Core.PauseRequiredError('The saved replacement changed before deletion. No delete was sent.', { code: 'OVERWRITE_NOT_VERIFIED' });
+      }
       this.report(context, 'deleting');
       state.deleteSent = true;
       try {

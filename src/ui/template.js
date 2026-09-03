@@ -24,11 +24,11 @@
   });
 
   const staticMarkup = String.raw`
-    <button class="launcher" type="button" title="Open Reddit Toolbox" aria-label="Open Reddit Toolbox">
+    <button class="launcher" type="button" title="Open Reddit Toolbox" aria-label="Open Reddit Toolbox" aria-expanded="false" aria-controls="rt-panel">
       <span class="launcher-label">RT</span>
       <span class="launcher-badge" hidden></span>
     </button>
-    <aside class="panel" role="dialog" aria-label="Reddit Toolbox" aria-modal="false">
+    <aside class="panel" id="rt-panel" role="dialog" aria-label="Reddit Toolbox" aria-modal="false">
       <header class="header">
         <div class="brand">
           <strong>Reddit Toolbox</strong>
@@ -40,8 +40,9 @@
       <div class="content">
         <section class="section">
           <div class="notice">
-            One confirmation starts the entire selected batch. No per-item clicks are required. Keep this Reddit tab open; the batch continues while this panel is closed and pauses only when Reddit needs attention or you press Pause or Stop.
+            One confirmation starts the entire selected batch. No per-item clicks are required. Keep this tab open; the batch continues while this panel is closed.
           </div>
+          <div class="status-line">Live connection is pending Reddit API approval and OAuth setup. Local archive import is available.</div>
         </section>
 
         <section class="section scope-section">
@@ -80,6 +81,11 @@
                 <option value="newest">Newest first</option>
               </select>
             </div>
+          </div>
+
+          <details class="advanced">
+            <summary>Advanced</summary>
+            <div class="grid">
             <div class="field full">
               <label for="keep-subreddits">Keep these subreddits</label>
               <input id="keep-subreddits" type="text" placeholder="askscience, personalfinance">
@@ -118,17 +124,20 @@
             Reddit Toolbox automatically waits through rate limits, retries temporary failures, and continues past isolated item failures. Five consecutive failures pause the batch for review.
           </div>
 
+          </details>
+
           <div class="actions">
             <button class="button primary scan" type="button">Scan history</button>
             <button class="button import" type="button">Import archive CSV</button>
             <input class="file-input archive-input" type="file" accept=".csv,text/csv" multiple>
             <button class="button build-preview" type="button">Prepare batch</button>
           </div>
-          <div class="status-line scan-status" role="status">For complete history, extract comments.csv and posts.csv from a Reddit data export.</div>
+          <div class="status-line scan-status" role="status">Profile listings can omit older history. Import comments.csv and posts.csv to include archive items.</div>
         </section>
 
         <section class="section preview-section">
-          <div class="section-title"><h2>2. Review batch</h2><span class="preview-caption">No batch prepared</span></div>
+          <div class="section-title"><h2>2. Review batch</h2></div>
+          <div class="preview-caption status-line">No batch prepared</div>
           <div class="summary">
             <div class="metric"><strong class="found-count">0</strong><span>Found</span></div>
             <div class="metric"><strong class="selected-count">0</strong><span>Selected</span></div>
@@ -153,9 +162,12 @@
             <div class="metric"><strong class="remaining-count">0</strong><span>Remaining</span></div>
             <div class="metric"><strong class="failed-count">0</strong><span>Failed</span></div>
             <div class="metric"><strong class="current-count">—</strong><span>Current</span></div>
+            <div class="metric"><strong class="deleted-count">0</strong><span>Deleted</span></div>
+            <div class="metric"><strong class="skipped-count">0</strong><span>Skipped</span></div>
+            <div class="metric"><strong class="elapsed-time">0s</strong><span>Elapsed</span></div>
           </div>
           <div class="current-action">Ready to run the selected batch automatically.</div>
-          <progress class="progress" value="0" max="1"></progress>
+          <progress class="progress" value="0" max="1" aria-label="Batch progress"></progress>
           <div class="status-line run-status" role="status">Idle</div>
           <div class="actions run-actions">
             <button class="button danger start" type="button" disabled>Run entire batch</button>
@@ -163,7 +175,7 @@
             <button class="button stop" type="button" disabled>Stop after current item</button>
             <button class="button retry" type="button" disabled>Prepare retry batch</button>
           </div>
-          <div class="log">No run activity.</div>
+          <details><summary>Run details</summary><div class="log">No run activity.</div></details>
         </section>
       </div>
     </aside>

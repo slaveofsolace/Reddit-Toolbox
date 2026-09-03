@@ -19,4 +19,4 @@ jobs:
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run check
       - name: Confirm generated userscript is committed
-        run: git diff --exit-code -- userscripts/reddit-toolbox.user.js
+        run: git diff --exit-code -- userscripts/reddit-toolbox.user.js SHA256SUMS.txt

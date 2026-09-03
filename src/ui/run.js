@@ -34,9 +34,9 @@
     refreshControls() {
       const active = Boolean(this.runner && ACTIVE_STATES.has(this.runner.state));
       const locked = Boolean(active || this.busy);
-      const summary = this.plan ? Core.planSummary(this.plan) : Core.planSummary(null);
+      const summary = active ? this.runner.progress().summary : Core.planSummary(this.plan);
       const confirmed = Boolean(
-        this.plan
+        !locked && this.plan
         && summary.ready > 0
         && Core.isPlanCurrent(this.plan)
         && this.refs.confirmationInput.value.trim() === this.plan.confirmation
@@ -88,13 +88,10 @@
         this.refs.launcher.title = 'Batch stopped';
         return;
       }
-      if (state === 'completed') {
+      if (state === 'completed' || state === 'completed-with-failures') {
         this.refs.launcher.classList.add(current.failed ? 'failed' : 'completed');
         this.refs.launcherLabel.textContent = current.failed ? '!' : '✓';
         this.refs.launcher.title = current.failed ? 'Batch completed with failures' : 'Batch completed';
-        this.completionResetTimer = setTimeout(() => {
-          if (!this.runner || !ACTIVE_STATES.has(this.runner.state)) this.setLauncherState('idle');
-        }, 5_000);
         return;
       }
 
@@ -129,6 +126,10 @@
       this.refs.processedCount.textContent = String(summary.processed);
       this.refs.remainingCount.textContent = String(summary.remaining);
       this.refs.failedCount.textContent = String(summary.failed);
+      this.refs.deletedCount.textContent = String(summary.completed);
+      this.refs.skippedCount.textContent = String(summary.skipped);
+      const started = this.plan?.startedAt ? new Date(this.plan.startedAt).getTime() : Date.now();
+      this.refs.elapsedTime.textContent = `${Math.max(0, Math.floor((Date.now() - started) / 1000))}s`;
       this.refs.currentCount.textContent = event.currentNumber ? `${event.currentNumber}/${summary.total}` : '—';
       return summary;
     }
@@ -143,7 +144,7 @@
           this.refs.currentAction.textContent = 'Starting the automated batch…';
           break;
         case 'item-started':
-          this.log(`Item ${event.index + 1}/${event.total} started: ${event.queueItem.content.fullname}.`);
+          this.log(`Item ${event.index + 1}/${event.total} started.`);
           this.refs.currentAction.textContent = `Item ${event.index + 1}/${event.total} · starting`;
           break;
         case 'item-phase':
@@ -236,6 +237,11 @@
       if (this.refs.confirmationInput.value.trim() !== this.plan.confirmation) return;
 
       this.settings = this.readSettingsFromForm();
+      const expectedOptions = { ...this.settings, accountId: this.plan.options.accountId };
+      if (Core.planDigest(this.plan.items.map((item) => item.content), expectedOptions) !== this.plan.digest || !this.plan.options.accountId) {
+        this.invalidatePlan('The account or settings need a fresh review. Prepare the batch again.');
+        return;
+      }
       this.busy = true;
       this.refreshControls();
       this.logLines = [];
@@ -244,20 +250,20 @@
       this.setStatus(this.refs.runStatus, 'Verifying the Reddit session before starting…');
       try {
         const client = this.ensureClient();
-        const session = await client.getSession(true);
+        const session = await client.assertSession(this.plan.options.accountId, true);
         this.username = session.username;
-        const reuseService = Boolean(
-          this.plan.retryOf
-          && this.removalService
-          && this.removalServiceClient === client
-        );
-        const service = reuseService
-          ? this.removalService
-          : new Reddit.RedditRemovalService(client, {
+        const serviceKey = this.plan.options.accountId;
+        let service = this.removalServices.get(serviceKey);
+        if (!service || service.client !== client) {
+          service = new Reddit.RedditRemovalService(client, {
             ...this.plan.options,
-            expectedUsername: session.username,
+            expectedUsername: this.plan.options.accountId,
             randomSource: globalThis.crypto
           });
+          this.removalServices.set(serviceKey, service);
+        }
+        service.deleteUneditablePosts = this.plan.options.deleteUneditablePosts;
+        service.replacementLength = this.plan.options.replacementLength;
         this.removalService = service;
         this.removalServiceClient = client;
         this.runner = new Core.BatchRunner((item, context) => service.remove(item, context), {
@@ -296,7 +302,7 @@
       if (this.runner.state === 'paused') {
         this.setStatus(this.refs.runStatus, 'Refreshing the Reddit session before resuming…');
         try {
-          await this.ensureClient().getSession(true);
+          await this.ensureClient().assertSession(this.plan.options.accountId, true);
           this.runner.resume();
         } catch (error) {
           this.setStatus(this.refs.runStatus, UI.compactError(error), 'error');
@@ -350,27 +356,20 @@
       if (!this.plan) return;
       const payload = {
         exportedAt: new Date().toISOString(),
-        username: this.username || null,
-        planId: this.plan.id,
-        planDigest: this.plan.digest,
         mode: this.plan.mode,
-        retryOf: this.plan.retryOf,
         summary: Core.planSummary(this.plan),
-        items: this.plan.items.map((item) => ({
-          fullname: item.content.fullname,
+        items: this.plan.items.map((item, index) => ({
+          item: index + 1,
           kind: item.content.kind,
-          subreddit: item.content.subreddit,
-          permalink: item.content.permalink,
-          createdAt: new Date(item.content.createdAt).toISOString(),
           status: item.status,
           phase: item.phase,
           attempts: item.attempts,
           outcome: item.outcome,
-          error: item.error
+          error: item.error ? { code: item.error.code } : null
         }))
       };
       Core.downloadText(
-        `${UI.safeFilenamePart(this.username)}-reddit-toolbox-log-${Date.now()}.json`,
+        `reddit-toolbox-log-${Date.now()}.json`,
         JSON.stringify(payload, null, 2)
       );
     }

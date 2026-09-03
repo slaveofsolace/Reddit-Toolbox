@@ -12,6 +12,8 @@
       this.refs = {};
       this.profileItems = [];
       this.archiveItems = [];
+      this.coverage = null;
+      this.removalServices = new Map();
       this.plan = null;
       this.runner = null;
       this.removalService = null;
@@ -26,7 +28,8 @@
         event.preventDefault();
         event.returnValue = '';
       };
-      this.settings = { ...UI.DEFAULT_SETTINGS, ...(this.store.get('settings', {}) || {}) };
+      const saved = this.store.get('settings', {}) || {};
+      this.settings = Object.fromEntries(Object.entries(UI.DEFAULT_SETTINGS).map(([key, value]) => [key, saved[key] ?? value]));
     }
 
     mount() {
@@ -72,6 +75,7 @@
         confirmationPhrase: $('.confirmation-phrase'), confirmationInput: $('.confirmation-input'),
         processedCount: $('.processed-count'), remainingCount: $('.remaining-count'),
         failedCount: $('.failed-count'), currentCount: $('.current-count'),
+        deletedCount: $('.deleted-count'), skippedCount: $('.skipped-count'), elapsedTime: $('.elapsed-time'),
         currentAction: $('.current-action'), progress: $('.progress'), runStatus: $('.run-status'),
         start: $('.start'), pause: $('.pause'), stop: $('.stop'), retry: $('.retry'), log: $('.log')
       };
@@ -98,26 +102,31 @@
 
       for (const input of this.shadow.querySelectorAll('input, select')) {
         if (input === this.refs.archiveInput || input === this.refs.confirmationInput) continue;
-        input.addEventListener('change', () => {
+        const changed = () => {
+          if (this.busy) return;
           this.settings = this.readSettingsFromForm();
           this.store.set('settings', this.settings);
           if (this.plan) this.invalidatePlan('Settings changed. Prepare the batch again.');
-        });
+        };
+        input.addEventListener('change', changed);
+        input.addEventListener('input', changed);
       }
     }
 
     open() {
       this.refs.panel.classList.add('open');
+      this.refs.launcher.setAttribute('aria-expanded', 'true');
       this.refs.close.focus();
     }
 
     close() {
       this.refs.panel.classList.remove('open');
+      this.refs.launcher.setAttribute('aria-expanded', 'false');
       this.refs.launcher.focus();
     }
 
     toggle() {
-      this.refs.panel.classList.toggle('open');
+      if (this.refs.panel.classList.contains('open')) this.close(); else this.open();
     }
 
     writeSettingsToForm() {
@@ -176,8 +185,8 @@
     }
 
     ensureClient() {
-      this.client ||= new Reddit.RedditSessionClient();
-      return this.client;
+      if (this.client) return this.client;
+      throw new Core.AuthError('Reddit API approval and an approved OAuth connection are required before live scanning or cleanup.', { code: 'API_APPROVAL_REQUIRED' });
     }
 
     setStatus(element, message, tone = '') {

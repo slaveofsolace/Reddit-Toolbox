@@ -1,5 +1,7 @@
 # Installation
 
+The RC2 follow-up is not released. Its default live connection is disabled until Reddit API approval and a supported OAuth integration are available. Installation instructions below describe distribution; cleanup instructions are the acceptance target, not a claim of authenticated functionality. See [API access](API_ACCESS.md).
+
 ## Install the userscript
 
 1. Install [Tampermonkey](https://www.tampermonkey.net/) for a supported desktop browser.
@@ -40,7 +42,7 @@ Link and media posts have no editable body. They are skipped unless **Delete lin
 
 ## Update
 
-Tampermonkey checks the userscript's `@updateURL`. Installing a newer build replaces the existing copy.
+Tampermonkey checks the userscript's `@updateURL`. Keep the script name and namespace unchanged for updates. The next released version must be newer than RC2. Update-in-place from both RC1 and RC2 is still an unchecked release gate; this unreleased change intentionally does not bump the published version.
 
 ## Remove
 

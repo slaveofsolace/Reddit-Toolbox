@@ -2,7 +2,8 @@
   'use strict';
 
   const { Core } = globalThis.RedditToolbox;
-  const PLAN_VERSION = 2;
+  const PLAN_VERSION = 3;
+  const reviewedBindings = new WeakMap();
   const RETRYABLE_STATUSES = new Set(['failed', 'stopped']);
 
   function fnv1a(value) {
@@ -16,6 +17,7 @@
 
   function executionOptions(options = {}) {
     return {
+      accountId: String(options.accountId || '').trim(),
       deleteUneditablePosts: options.deleteUneditablePosts === true,
       verifyOverwrite: options.verifyOverwrite !== false,
       replacementLength: Math.max(8, Math.min(128, Math.trunc(Number(options.replacementLength) || 24))),
@@ -28,26 +30,21 @@
   }
 
   function planDigest(items, options = {}) {
+    return fnv1a(planBinding(items, options));
+  }
+
+  function planBinding(items, options = {}) {
     const normalized = executionOptions(options);
-    const settings = [
-      'automated-batch',
-      normalized.deleteUneditablePosts ? 'direct-delete' : 'overwrite-only',
-      normalized.verifyOverwrite ? 'verify' : 'no-verify',
-      normalized.replacementLength,
-      normalized.continueOnFailure ? 'continue' : 'stop-on-failure',
-      normalized.maxConsecutiveFailures
-    ].join('|');
-    const targets = (items || []).map((item) => (
-      `${item.kind}:${item.fullname}:${item.editable === false ? 'direct' : 'editable'}`
-    )).join('\n');
-    return fnv1a(`${settings}\n${targets}`);
+    return JSON.stringify({ options: normalized, targets: (items || []).map((item) => (
+      [item.kind, item.fullname, item.editable !== false]
+    )) });
   }
 
   function createPlan(items, options = {}, now = Date.now()) {
-    const targets = Array.from(items || []);
+    const targets = Array.from(items || [], (item) => ({ ...item }));
     const normalizedOptions = executionOptions(options);
     const digest = planDigest(targets, normalizedOptions);
-    return {
+    const plan = {
       version: PLAN_VERSION,
       mode: 'automated-batch',
       id: `plan-${now}-${digest}`,
@@ -72,6 +69,8 @@
         error: null
       }))
     };
+    reviewedBindings.set(plan, planBinding(targets, normalizedOptions));
+    return plan;
   }
 
   function createRetryPlan(plan, now = Date.now()) {
@@ -89,7 +88,21 @@
   function isPlanCurrent(plan) {
     if (plan?.version !== PLAN_VERSION || plan?.mode !== 'automated-batch') return false;
     if (!plan?.items || !Array.isArray(plan.items)) return false;
-    return plan.digest === planDigest(plan.items.map((item) => item.content), plan.options);
+    const binding = planBinding(plan.items.map((item) => item.content), plan.options);
+    return reviewedBindings.get(plan) === binding && plan.digest === fnv1a(binding);
+  }
+
+  function lockPlan(plan) {
+    if (!isPlanCurrent(plan)) throw new Error('The reviewed batch changed. Prepare it again.');
+    Object.freeze(plan.options);
+    for (const item of plan.items) {
+      Object.freeze(item.content);
+      Object.defineProperty(item, 'content', { writable: false, configurable: false });
+    }
+    Object.freeze(plan.items);
+    for (const name of ['options', 'items', 'digest', 'confirmation']) {
+      Object.defineProperty(plan, name, { writable: false, configurable: false });
+    }
   }
 
   function planSummary(plan) {
@@ -123,5 +136,6 @@
   Core.createPlan = createPlan;
   Core.createRetryPlan = createRetryPlan;
   Core.isPlanCurrent = isPlanCurrent;
+  Core.lockPlan = lockPlan;
   Core.planSummary = planSummary;
 })();

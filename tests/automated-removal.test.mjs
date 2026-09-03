@@ -101,9 +101,11 @@ test('phase events expose the full automatic overwrite-delete lifecycle', async 
     'checking-session',
     'checking-ownership',
     'preparing-replacement',
+    'checking-session',
     'overwriting',
     'waiting-for-save',
     'verifying-overwrite',
+    'checking-session',
     'deleting',
     'verifying-deletion',
     'complete'

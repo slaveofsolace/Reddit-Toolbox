@@ -1,56 +1,51 @@
-# RC2 Release Checklist
+# Release checklist
 
-## Completed
+RC2 follow-up, unreleased. Local evidence was refreshed on 2026-09-03.
 
-- [x] Deterministic userscript build
-- [x] Platform-neutral Toolbox Family core
-- [x] Profile comments and posts scanner with cursor pagination
-- [x] Reddit archive CSV import
-- [x] Date, amount, type, order, subreddit, score, and text filters
-- [x] Reviewed-plan digest and one exact confirmation for the complete batch
-- [x] Automated full-queue execution with no per-item interaction
-- [x] Whole-batch state, progress, current phase, and panel-closed launcher status
-- [x] Active-account revalidation before every item
-- [x] Ownership verification before mutation
-- [x] Random overwrite, saved-text verification, deletion, and final verification
-- [x] Direct-delete opt-in for link and media posts
-- [x] Automatic rate-limit waits and temporary-failure retries
-- [x] Isolated-failure continuation and consecutive-failure attention guard
-- [x] Pause, stop-after-current-item, and one-action retry-batch preparation
-- [x] Cross-tab exclusive run lock where Web Locks is available
-- [x] Navigation warning during an active batch
-- [x] No automatic resume after reload
-- [x] Backup and run-log exports
-- [x] Automated tests and final userscript syntax/integrity check
+## Local verification
 
-## Authenticated acceptance still required
+- [x] `npm ci` and `npm run check`: 70 passing tests
+- [x] Deterministic source-order composition, matching package/metadata version, syntax, dynamic-evaluation rejection, and SHA-256 integrity
+- [x] Generated-script automatic two-comment and mixed queues
+- [x] Account-bound review and account changes before the next mutation
+- [x] Ownership and live editability checks; direct-delete opt-in
+- [x] Exact saved replacement before deletion; eventual-consistency read retries
+- [x] Ambiguous edit/delete and lost response-body protection
+- [x] 401/403 attention, 429 Retry-After waits, bounded transient retries/timeouts
+- [x] Pause at mutation boundaries, in-flight settlement, stop, and retry construction
+- [x] Five-consecutive-failure guard and isolated failure continuation
+- [x] No-lock failure, same-origin two-tab exclusion, and canonical-origin mutation restriction
+- [x] No default unapproved live connection; no authority reconstruction after reload
+- [x] Chunked CSV import, strict headers/IDs, deduplication, rejected-row counts, and bounded previews
+- [x] Preferences exclude active authority; exported run logs omit content/account identifiers
 
-Use a disposable Reddit account or disposable content. Preserve a network log only after removing cookies, modhashes, tokens, and account identifiers.
+## Rendered fixture acceptance
 
-- [ ] Confirm session discovery on `www.reddit.com`
-- [ ] Confirm session discovery on `old.reddit.com`
-- [ ] Confirm current behavior on `new.reddit.com` and `sh.reddit.com`
-- [ ] Scan one comment and one self-post
-- [ ] Import current-format `comments.csv` and `posts.csv`
-- [ ] Confirm one typed approval starts a multi-item batch without further interaction
-- [ ] Close and reopen the panel during a running batch without interrupting it
-- [ ] Confirm account switching pauses before the next mutation
-- [ ] Reject an archive item owned by another account before mutation
-- [ ] Overwrite, verify, delete, and verify multiple disposable comments automatically
-- [ ] Overwrite, verify, delete, and verify a disposable self-post
-- [ ] Confirm a link post is skipped by default
-- [ ] Confirm direct deletion only after its option is included in a fresh batch
-- [ ] Confirm a 429 response honors `Retry-After` and resumes automatically
-- [ ] Confirm a temporary 5xx before mutation retries with bounded backoff
-- [ ] Confirm an isolated permanent failure advances to the next item
-- [ ] Confirm five consecutive failures pause the batch
-- [ ] Confirm a challenge, 401, 403, or uncertain delete pauses the batch
-- [ ] Confirm Stop prevents another item from starting
-- [ ] Confirm retry-batch preparation includes only failed and stopped items
-- [ ] Confirm two Reddit tabs cannot run concurrent batches in supported browsers
-- [ ] Confirm reloading the page cannot resume a run
-- [ ] Decide whether the same-origin session adapter remains viable under Reddit's current OAuth requirements
+The generated script ran in isolated Playwright profiles. Every network request was intercepted with synthetic data. This table does not claim Tampermonkey or authenticated Reddit acceptance.
 
-## Stable release gate
+| Check | Chromium 151.0.7922.34 | Firefox 153.0 |
+| --- | --- | --- |
+| One confirmation, automatic two-comment and mixed batch | Pass | Pass |
+| Closed-panel run and persistent completion launcher | Pass | Pass |
+| Second tab refused without mutations | Pass | Pass |
+| Navigation warning, settings lock, no reload resume | Pass | Pass |
+| Keyboard close/focus; light/dark; 390px and 320px layouts | Pass | Pass |
+| 50,000-row archive; 100 rendered rows; UI timer advances | Pass | Pass |
+| Relevant console errors | None | None |
 
-Do not tag `v1.0.0` until the authenticated matrix passes and the supported authentication method is documented. Any OAuth implementation must use a registered application, least-privilege scopes, no embedded client secret, state validation, revocation support, and Reddit's current rules.
+## External gates still required
+
+- [ ] Explicit Reddit API approval for this use case
+- [ ] Registered public OAuth client and approved redirect/flow
+- [ ] OAuth consent/state/expiry/revocation and current-tab account binding accepted
+- [ ] Authenticated identity and listing response shapes accepted
+- [ ] Actual behavior on `www`, `old`, `new`, and `sh` surfaces documented; only the canonical origin may mutate
+- [ ] One exact owner-approved disposable two-comment batch automatically overwrites and deletes both
+- [ ] Approved two-self-post, mixed, and explicitly direct-deleted disposable cases
+- [ ] Live ownership, account-change, ambiguous response, pause/stop, and retry acceptance
+- [ ] Tampermonkey fresh install in Chromium and Firefox
+- [ ] Tampermonkey update-in-place from RC1 and RC2 to the next released version
+- [ ] Exact-head CI passes on the merge/release head
+- [ ] Published userscript/checksum and install/update URLs verified for that release
+
+No new tag or release is justified until these gates are resolved. Local mocks do not prove platform approval, authentication, actual Reddit mutation semantics, or extension sandbox behavior.

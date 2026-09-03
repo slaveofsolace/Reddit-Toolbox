@@ -12,10 +12,10 @@ Profile results, imported CSV rows, review plans, random replacement strings, ac
 
 ## Explicit exports
 
-**Export selected content** creates a local JSON backup of the reviewed targets. **Export run log** creates a local JSON ledger with status and error details. The user chooses whether and where to save these files.
+**Export selected content** creates a local JSON backup containing the account and reviewed content. **Export run log** creates a sanitized local ledger with ordinal item numbers, type, status, and error codes. It excludes usernames, content IDs, subreddit names, permalinks, original text, and replacements. The user chooses whether and where to save these files.
 
 ## Network boundary
 
-The included adapter sends only the Reddit requests needed to identify the signed-in account, list its content, verify ownership, edit, delete, and verify results. It rejects non-`reddit.com` request origins. There is no analytics endpoint, telemetry service, credential collector, or remote control service.
+The default live connection is disabled pending approved OAuth access. The provisional adapter remains for synthetic acceptance and rejects requests outside its exact HTTPS Reddit origin, rejects redirects, and bounds request timeouts. Destructive requests are restricted to `www.reddit.com` so the Web Lock covers every supported mutation tab. There is no analytics endpoint, telemetry service, credential collector, or remote control service.
 
 Reddit still receives and records normal account activity performed through its service. Overwriting and deleting content does not guarantee removal from third-party archives, search caches, screenshots, quotes, backups, or prior data copies.

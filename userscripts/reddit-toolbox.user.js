@@ -118,7 +118,7 @@
       return buffer[0] % maxExclusive;
     }
 
-    return Math.floor(Math.random() * maxExclusive);
+    throw new Error('Secure random generation is unavailable. Cleanup cannot start.');
   }
 
   function randomLetterString(length = 24, randomSource = globalThis.crypto) {
@@ -147,14 +147,15 @@
 
   const { Core } = globalThis.RedditToolbox;
 
-  function parseCsv(text) {
+  function* csvRecords(text) {
     const source = String(text || '').replace(/^\uFEFF/, '');
-    const rows = [];
     let row = [];
     let field = '';
     let quoted = false;
+    let closedQuote = false;
 
     for (let index = 0; index < source.length; index += 1) {
+      if (index && index % 32_768 === 0) yield { progress: index };
       const char = source[index];
 
       if (quoted) {
@@ -163,6 +164,7 @@
           index += 1;
         } else if (char === '"') {
           quoted = false;
+          closedQuote = true;
         } else {
           field += char;
         }
@@ -170,16 +172,20 @@
       }
 
       if (char === '"') {
+        if (field || closedQuote) throw new Error('Unexpected quote in a CSV field.');
         quoted = true;
       } else if (char === ',') {
         row.push(field);
         field = '';
+        closedQuote = false;
       } else if (char === '\n') {
         row.push(field);
-        rows.push(row);
+        if (row.some((value) => value !== '')) yield { values: row };
         row = [];
         field = '';
+        closedQuote = false;
       } else if (char !== '\r') {
+        if (closedQuote) throw new Error('Unexpected text after a quoted CSV field.');
         field += char;
       }
     }
@@ -187,22 +193,54 @@
     if (quoted) throw new Error('The CSV file ends inside a quoted field.');
     if (field.length > 0 || row.length > 0) {
       row.push(field);
-      rows.push(row);
+      if (row.some((value) => value !== '')) yield { values: row };
     }
+  }
 
-    while (rows.length && rows[rows.length - 1].every((value) => value === '')) {
-      rows.pop();
-    }
-    if (!rows.length) return [];
-
-    const headers = rows.shift().map((header, index) => {
+  function csvHeaders(values) {
+    const headers = values.map((header, index) => {
       const normalized = header.trim().toLowerCase().replace(/\s+/g, '_');
       return normalized || `column_${index + 1}`;
     });
+    if (new Set(headers).size !== headers.length) throw new Error('Duplicate CSV headers.');
+    return headers;
+  }
 
-    return rows
-      .filter((values) => values.some((value) => value !== ''))
-      .map((values) => Object.fromEntries(headers.map((header, index) => [header, values[index] || ''])));
+  function csvObject(headers, values) {
+    return Object.fromEntries(headers.map((header, index) => [header, values[index] || '']));
+  }
+
+  function parseCsv(text) {
+    let headers;
+    const rows = [];
+    for (const record of csvRecords(text)) {
+      if (!record.values) continue;
+      if (!headers) headers = csvHeaders(record.values);
+      else rows.push(csvObject(headers, record.values));
+    }
+    return rows;
+  }
+
+  async function readCsvAsync(text, options = {}) {
+    let headers;
+    let count = 0;
+    const yieldTask = options.yieldTask || (() => new Promise((resolve) => setTimeout(resolve, 0)));
+    for (const record of csvRecords(text)) {
+      if (options.signal?.aborted) throw new Error('Archive import cancelled.');
+      if (!record.values) {
+        options.onProgress?.(count);
+        await yieldTask();
+      } else if (!headers) {
+        headers = csvHeaders(record.values);
+        options.onHeaders?.(headers);
+      } else {
+        count += 1;
+        options.onRow?.(csvObject(headers, record.values), record.values.length === headers.length);
+      }
+    }
+    if (!headers) throw new Error('The CSV file is empty.');
+    options.onProgress?.(count);
+    return count;
   }
 
   function toCsv(rows, columns) {
@@ -218,6 +256,7 @@
   }
 
   Core.parseCsv = parseCsv;
+  Core.readCsvAsync = readCsvAsync;
   Core.toCsv = toCsv;
 })();
 
@@ -383,7 +422,8 @@
   'use strict';
 
   const { Core } = globalThis.RedditToolbox;
-  const PLAN_VERSION = 2;
+  const PLAN_VERSION = 3;
+  const reviewedBindings = new WeakMap();
   const RETRYABLE_STATUSES = new Set(['failed', 'stopped']);
 
   function fnv1a(value) {
@@ -397,6 +437,7 @@
 
   function executionOptions(options = {}) {
     return {
+      accountId: String(options.accountId || '').trim(),
       deleteUneditablePosts: options.deleteUneditablePosts === true,
       verifyOverwrite: options.verifyOverwrite !== false,
       replacementLength: Math.max(8, Math.min(128, Math.trunc(Number(options.replacementLength) || 24))),
@@ -409,26 +450,21 @@
   }
 
   function planDigest(items, options = {}) {
+    return fnv1a(planBinding(items, options));
+  }
+
+  function planBinding(items, options = {}) {
     const normalized = executionOptions(options);
-    const settings = [
-      'automated-batch',
-      normalized.deleteUneditablePosts ? 'direct-delete' : 'overwrite-only',
-      normalized.verifyOverwrite ? 'verify' : 'no-verify',
-      normalized.replacementLength,
-      normalized.continueOnFailure ? 'continue' : 'stop-on-failure',
-      normalized.maxConsecutiveFailures
-    ].join('|');
-    const targets = (items || []).map((item) => (
-      `${item.kind}:${item.fullname}:${item.editable === false ? 'direct' : 'editable'}`
-    )).join('\n');
-    return fnv1a(`${settings}\n${targets}`);
+    return JSON.stringify({ options: normalized, targets: (items || []).map((item) => (
+      [item.kind, item.fullname, item.editable !== false]
+    )) });
   }
 
   function createPlan(items, options = {}, now = Date.now()) {
-    const targets = Array.from(items || []);
+    const targets = Array.from(items || [], (item) => ({ ...item }));
     const normalizedOptions = executionOptions(options);
     const digest = planDigest(targets, normalizedOptions);
-    return {
+    const plan = {
       version: PLAN_VERSION,
       mode: 'automated-batch',
       id: `plan-${now}-${digest}`,
@@ -453,6 +489,8 @@
         error: null
       }))
     };
+    reviewedBindings.set(plan, planBinding(targets, normalizedOptions));
+    return plan;
   }
 
   function createRetryPlan(plan, now = Date.now()) {
@@ -470,7 +508,21 @@
   function isPlanCurrent(plan) {
     if (plan?.version !== PLAN_VERSION || plan?.mode !== 'automated-batch') return false;
     if (!plan?.items || !Array.isArray(plan.items)) return false;
-    return plan.digest === planDigest(plan.items.map((item) => item.content), plan.options);
+    const binding = planBinding(plan.items.map((item) => item.content), plan.options);
+    return reviewedBindings.get(plan) === binding && plan.digest === fnv1a(binding);
+  }
+
+  function lockPlan(plan) {
+    if (!isPlanCurrent(plan)) throw new Error('The reviewed batch changed. Prepare it again.');
+    Object.freeze(plan.options);
+    for (const item of plan.items) {
+      Object.freeze(item.content);
+      Object.defineProperty(item, 'content', { writable: false, configurable: false });
+    }
+    Object.freeze(plan.items);
+    for (const name of ['options', 'items', 'digest', 'confirmation']) {
+      Object.defineProperty(plan, name, { writable: false, configurable: false });
+    }
   }
 
   function planSummary(plan) {
@@ -504,6 +556,7 @@
   Core.createPlan = createPlan;
   Core.createRetryPlan = createRetryPlan;
   Core.isPlanCurrent = isPlanCurrent;
+  Core.lockPlan = lockPlan;
   Core.planSummary = planSummary;
 })();
 
@@ -546,10 +599,12 @@
       this.plan = null;
       this.currentIndex = -1;
       this.consecutiveFailures = 0;
+      this.summary = null;
+      this.acquiringLock = false;
     }
 
     progress() {
-      const summary = Core.planSummary(this.plan);
+      const summary = this.summary ? { ...this.summary } : Core.planSummary(this.plan);
       const current = this.currentIndex >= 0 ? this.plan?.items?.[this.currentIndex] || null : null;
       return {
         summary,
@@ -561,6 +616,18 @@
         currentNumber: current ? this.currentIndex + 1 : 0,
         currentFullname: current?.content?.fullname || null
       };
+    }
+
+    setItemStatus(item, status) {
+      if (this.summary) {
+        this.summary[item.status] -= 1;
+        this.summary[status] += 1;
+        const summary = this.summary;
+        summary.processed = summary.completed + summary.skipped + summary.failed;
+        summary.remaining = summary.ready + summary.processing + summary.stopped;
+        summary.percent = summary.total ? Math.round(summary.processed / summary.total * 100) : 0;
+      }
+      item.status = status;
     }
 
     emit(type, detail = {}) {
@@ -637,7 +704,7 @@
     }
 
     async process(queueItem, index, total) {
-      queueItem.status = 'processing';
+      this.setItemStatus(queueItem, 'processing');
       queueItem.phase = 'starting';
       queueItem.startedAt = new Date().toISOString();
       this.emit('item-started', { queueItem, index, total });
@@ -655,10 +722,11 @@
             index,
             total,
             reportPhase,
+            beforeMutation: () => this.waitWhilePaused(),
             isStopRequested: () => this.stopRequested
           });
           queueItem.outcome = outcome || { status: 'completed' };
-          queueItem.status = outcome?.status === 'skipped' ? 'skipped' : 'completed';
+          this.setItemStatus(queueItem, outcome?.status === 'skipped' ? 'skipped' : 'completed');
           queueItem.phase = queueItem.status;
           queueItem.finishedAt = new Date().toISOString();
           this.consecutiveFailures = 0;
@@ -699,7 +767,7 @@
             code: error?.code || 'UNKNOWN_ERROR',
             message: error?.message || String(error)
           };
-          queueItem.status = 'failed';
+          this.setItemStatus(queueItem, 'failed');
           queueItem.phase = 'failed';
           queueItem.finishedAt = new Date().toISOString();
           this.consecutiveFailures += 1;
@@ -721,7 +789,7 @@
       }
 
       if (queueItem.status === 'processing') {
-        queueItem.status = 'stopped';
+        this.setItemStatus(queueItem, 'stopped');
         queueItem.phase = 'stopped';
         queueItem.finishedAt = new Date().toISOString();
       }
@@ -739,30 +807,28 @@
         );
       }
 
-      const key = '__redditToolboxActiveBatchRunner';
-      if (globalThis[key] && globalThis[key] !== this) {
-        throw new Error('Another Reddit Toolbox batch is already active.');
-      }
-      globalThis[key] = this;
-      try {
-        return await operation();
-      } finally {
-        if (globalThis[key] === this) delete globalThis[key];
-      }
+      throw new Error('This browser cannot provide an exclusive cross-tab lock. Cleanup is unavailable.');
     }
 
     async run(plan) {
-      if (ACTIVE_STATES.has(this.state)) throw new Error('This batch runner is already active.');
-      return this.withRunLock(() => this.runBatch(plan));
+      if (this.acquiringLock || ACTIVE_STATES.has(this.state)) throw new Error('This batch runner is already active.');
+      this.acquiringLock = true;
+      try {
+        return await this.withRunLock(() => this.runBatch(plan));
+      } finally {
+        this.acquiringLock = false;
+      }
     }
 
     async runBatch(plan) {
       if (!Core.isPlanCurrent(plan)) throw new Error('The reviewed batch changed. Build a new preview.');
+      Core.lockPlan(plan);
       if (!plan.items.some((item) => item.status === 'ready')) {
         throw new Error('This batch has no queued items.');
       }
 
       this.plan = plan;
+      this.summary = Core.planSummary(plan);
       this.state = 'running';
       this.stopRequested = false;
       this.pauseReason = '';
@@ -783,7 +849,7 @@
         this.emit('batch-progress', { queueItem, index, total: plan.items.length });
         if (this.stopRequested) break;
 
-        const hasMore = plan.items.slice(index + 1).some((item) => item.status === 'ready');
+        const hasMore = this.summary.ready > 0;
         if (hasMore) {
           const delayMs = Core.randomBetween(this.minimumDelayMs, this.maximumDelayMs, this.random);
           this.emit('cooldown', { delayMs, index, total: plan.items.length });
@@ -800,7 +866,7 @@
       if (this.stopRequested) {
         for (const item of plan.items) {
           if (item.status === 'ready') {
-            item.status = 'stopped';
+            this.setItemStatus(item, 'stopped');
             item.phase = 'stopped';
           }
         }
@@ -808,8 +874,8 @@
         this.state = 'stopped';
         this.emit('batch-stopped', { plan });
       } else {
-        plan.status = 'completed';
-        this.state = 'completed';
+        plan.status = this.summary.failed ? 'completed-with-failures' : 'completed';
+        this.state = plan.status;
         this.emit('batch-completed', { plan });
       }
       return Core.planSummary(plan);
@@ -975,11 +1041,7 @@
     const permalink = normalizePermalink(
       row.permalink || row.url || row.link || row.path || ''
     );
-    let rawId = row.fullname || row.name || row.id || row.comment_id || row.post_id || '';
-    if (!rawId && permalink) {
-      const match = permalink.match(/\/comments\/([a-z0-9]+)(?:\/[^/]+)?(?:\/([a-z0-9]+))?/i);
-      rawId = kind === 'comment' ? match?.[2] || '' : match?.[1] || '';
-    }
+    const rawId = row.fullname || row.name || row.id || row.comment_id || row.post_id || '';
     const fullname = normalizeFullname(rawId, kind);
     const createdAt = parseTimestamp(
       row.created_utc || row.created || row.date || row.timestamp || row.created_at
@@ -995,7 +1057,7 @@
       kind,
       createdAt,
       subreddit: String(row.subreddit || subredditFromPermalink(permalink)),
-      score: Number.isFinite(Number(row.score)) ? Number(row.score) : null,
+      score: row.score !== '' && row.score !== undefined && Number.isFinite(Number(row.score)) ? Number(row.score) : null,
       permalink,
       title: kind === 'post' ? String(row.title || '') : '',
       text,
@@ -1008,14 +1070,14 @@
 
   function mergeItems(...collections) {
     const merged = new Map();
-    for (const item of collections.flat()) {
+    for (const collection of collections) for (const item of (Array.isArray(collection) ? collection : [collection])) {
       if (!item?.fullname) continue;
       const current = merged.get(item.fullname);
       if (!current) {
         merged.set(item.fullname, { ...item });
         continue;
       }
-      const profile = item.source === 'profile' ? item : current.source === 'profile' ? current : null;
+      const profile = item.source?.includes('profile') ? item : current.source?.includes('profile') ? current : null;
       const preferred = profile || item;
       merged.set(item.fullname, {
         ...current,
@@ -1091,20 +1153,29 @@
       this.origin = options.origin || globalThis.location?.origin || 'https://www.reddit.com';
       this.modhash = options.modhash || '';
       this.username = options.username || '';
+      this.requestTimeoutMs = Math.max(100, Math.min(60_000, Number(options.requestTimeoutMs) || 30_000));
       if (typeof this.fetch !== 'function') throw new Error('Fetch is unavailable.');
     }
 
     url(path) {
       const url = new URL(path, this.origin);
-      if (!/(^|\.)reddit\.com$/i.test(url.hostname)) {
-        throw new Error('Reddit Toolbox only sends requests to reddit.com.');
+      if (url.protocol !== 'https:' || url.origin !== this.origin || url.username || url.password
+        || !['www.reddit.com', 'old.reddit.com', 'new.reddit.com', 'sh.reddit.com'].includes(url.hostname)) {
+        throw new Error('Reddit Toolbox only sends requests to its approved Reddit origin.');
       }
       return url;
     }
 
     async readResponse(response) {
       const contentType = response.headers?.get?.('content-type') || '';
-      const text = await response.text();
+      // Interpret definite HTTP rejection before attempting to read a possibly broken body.
+      if (response.status === 429) throw new Core.RateLimitError('Reddit asked the tool to slow down.', retryAfterMilliseconds(response));
+      if (response.status === 401) throw new Core.AuthError('Your Reddit session expired. Sign in again, then resume.', { status: 401 });
+      if (response.status === 403) throw new Core.PauseRequiredError('Reddit blocked this request. Check the page for an account notice.', { code: 'REDDIT_FORBIDDEN', status: 403 });
+      let text;
+      try { text = await response.text(); } catch {
+        throw new Core.ApiError('Reddit response was interrupted.', { code: 'RESPONSE_LOST', status: response.status, retryable: true });
+      }
       let payload = null;
       if (text && (contentType.includes('json') || /^[\s]*[\[{]/.test(text))) {
         try {
@@ -1113,28 +1184,11 @@
           throw new Core.ApiError('Reddit returned malformed JSON.', {
             code: 'INVALID_JSON',
             status: response.status,
-            retryable: response.status >= 500
+            retryable: true
           });
         }
       }
 
-      if (response.status === 429) {
-        throw new Core.RateLimitError(
-          'Reddit asked the tool to slow down.',
-          retryAfterMilliseconds(response)
-        );
-      }
-      if (response.status === 401) {
-        throw new Core.AuthError('Your Reddit session expired. Sign in again, then resume.', {
-          status: response.status
-        });
-      }
-      if (response.status === 403) {
-        throw new Core.PauseRequiredError(
-          'Reddit blocked this request. Check the page for a challenge or account notice, then resume.',
-          { code: 'REDDIT_FORBIDDEN', status: response.status }
-        );
-      }
       if (!response.ok) {
         throw new Core.ApiError(`Reddit returned HTTP ${response.status}.`, {
           code: `HTTP_${response.status}`,
@@ -1163,50 +1217,53 @@
         });
       }
 
+      if (text && (!payload || typeof payload !== 'object')) {
+        throw new Core.PauseRequiredError('Reddit returned an unrecognized response. Check the page before resuming.', { code: 'UNRECOGNIZED_RESPONSE', status: response.status });
+      }
       return payload;
     }
 
-    async getJson(path) {
-      let response;
+    async request(path, init) {
+      const url = this.url(path);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
       try {
-        response = await this.fetch(this.url(path), {
-          method: 'GET',
+        const response = await this.fetch(url, {
+          ...init,
           credentials: 'include',
-          headers: { Accept: 'application/json' }
+          cache: 'no-store',
+          redirect: 'error',
+          signal: controller.signal
         });
+        return await this.readResponse(response);
       } catch (error) {
-        throw new Core.ApiError('Could not reach Reddit.', {
+        if (error instanceof Core.ToolboxError) throw error;
+        throw new Core.ApiError('The Reddit request did not complete.', {
           code: 'NETWORK_ERROR',
-          retryable: true,
-          details: error
+          retryable: true
         });
+      } finally {
+        clearTimeout(timeout);
       }
-      return this.readResponse(response);
+    }
+
+    async getJson(path) {
+      return this.request(path, { method: 'GET', headers: { Accept: 'application/json' } });
     }
 
     async postForm(path, values) {
+      if (this.origin !== 'https://www.reddit.com') throw new Core.AuthError('Open www.reddit.com for cleanup. A single origin is required for the cross-tab lock.', { code: 'CANONICAL_ORIGIN_REQUIRED' });
       if (!this.modhash) throw new Core.AuthError('Reddit did not provide a session modhash. Refresh and sign in again.');
       const body = new URLSearchParams({ ...values, uh: this.modhash });
-      let response;
-      try {
-        response = await this.fetch(this.url(path), {
+      return this.request(path, {
           method: 'POST',
-          credentials: 'include',
           headers: {
             Accept: 'application/json',
             'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
             'X-Modhash': this.modhash
           },
           body
-        });
-      } catch (error) {
-        throw new Core.ApiError('Could not reach Reddit.', {
-          code: 'NETWORK_ERROR',
-          retryable: true,
-          details: error
-        });
-      }
-      return this.readResponse(response);
+      });
     }
 
     async getSession(requireModhash = false) {
@@ -1217,7 +1274,7 @@
       this.modhash = String(data.modhash || '');
       if (requireModhash && !this.modhash) {
         throw new Core.AuthError(
-          'Reddit found the signed-in account but did not expose an action token on this surface. Open old.reddit.com, reload, and retry.',
+          'The provisional session adapter did not receive an action token. Live access requires approved OAuth setup.',
           { code: 'MODHASH_MISSING' }
         );
       }
@@ -1228,10 +1285,9 @@
       const session = await this.getSession(requireModhash);
       if (expectedUsername && !sameUsername(session.username, expectedUsername)) {
         throw new Core.PauseRequiredError(
-          `The signed-in Reddit account changed from u/${expectedUsername} to u/${session.username}. Switch back before resuming.`,
+          'The signed-in Reddit account changed. Switch back to the reviewed account before resuming.',
           {
             code: 'ACCOUNT_CHANGED',
-            details: { expectedUsername, actualUsername: session.username }
           }
         );
       }
@@ -1251,7 +1307,8 @@
       if (options.after) params.set('after', options.after);
       const path = `/user/${encodeURIComponent(this.username)}/${section}.json?${params}`;
       const payload = await this.getJson(path);
-      const children = Array.isArray(payload?.data?.children) ? payload.data.children : [];
+      if (!Array.isArray(payload?.data?.children)) throw new Core.ApiError('Reddit did not return a valid history listing.', { code: 'INVALID_LISTING' });
+      const children = payload.data.children;
       return {
         items: children.map(Reddit.listingChildToItem).filter(Boolean),
         after: payload?.data?.after || null
@@ -1269,15 +1326,30 @@
     }
 
     async getThing(fullname) {
+      if (!/^t[13]_[a-z0-9]+$/.test(fullname)) throw new Core.ApiError('Invalid content ID.', { code: 'INVALID_TARGET' });
       const params = new URLSearchParams({ id: fullname, raw_json: '1' });
       const payload = await this.getJson(`/api/info.json?${params}`);
-      const child = payload?.data?.children?.[0];
-      if (!child || !['t1', 't3'].includes(child.kind)) return null;
+      const children = payload?.data?.children;
+      if (!Array.isArray(children)) throw new Core.PauseRequiredError('Reddit did not return a valid item listing.', { code: 'INVALID_LISTING' });
+      if (!children.length) return null;
+      const child = children[0];
+      if (children.length !== 1 || !['t1', 't3'].includes(child.kind)) throw new Core.PauseRequiredError('Reddit returned an unexpected target.', { code: 'TARGET_MISMATCH' });
       const actualFullname = Reddit.normalizeFullname(
         child.data?.name || child.data?.id,
         child.kind === 't1' ? 'comment' : 'post'
       );
-      return actualFullname === fullname ? child : null;
+      if (actualFullname !== fullname) throw new Core.PauseRequiredError('Reddit returned a different target.', { code: 'TARGET_MISMATCH' });
+      return child;
+    }
+
+    async inspectTarget(fullname) {
+      const child = await this.getThing(fullname);
+      if (!child) return { available: false, owned: false };
+      return {
+        available: true,
+        owned: sameUsername(child.data?.author, this.username),
+        editable: child.kind === 't1' || child.data?.is_self === true
+      };
     }
 
     async verifyOwnership(fullname) {
@@ -1298,10 +1370,10 @@
 
     async isDeleted(fullname) {
       const child = await this.getThing(fullname);
-      if (!child) return true;
+      if (!child) return false;
       const author = String(child.data?.author || '').toLowerCase();
       const text = String(child.kind === 't1' ? child.data?.body ?? '' : child.data?.selftext ?? '').toLowerCase();
-      return (!author || author === '[deleted]') && ['', '[deleted]', '[removed]'].includes(text);
+      return author === '[deleted]' && ['', '[deleted]'].includes(text);
     }
 
     async delete(fullname) {
@@ -1388,8 +1460,31 @@
     };
   }
 
+  async function importArchiveCsvAsync(text, filename, options = {}) {
+    if (!/^(comments|posts)\.csv$/i.test(filename)) throw new Error('Choose comments.csv or posts.csv from your Reddit export.');
+    const items = new Map();
+    let rejected = 0;
+    let duplicates = 0;
+    const rowCount = await Core.readCsvAsync(text, {
+      ...options,
+      onHeaders(headers) {
+        const hasId = ['fullname', 'name', 'id', 'comment_id', 'post_id'].some((name) => headers.includes(name));
+        const hasDate = ['created_utc', 'created', 'date', 'timestamp', 'created_at'].some((name) => headers.includes(name));
+        if (!hasId || !hasDate) throw new Error('The archive needs explicit item ID and date columns. IDs are not inferred from links.');
+      },
+      onRow(row, validWidth) {
+        const item = validWidth ? Reddit.archiveRowToItem(row, filename) : null;
+        if (!item) rejected += 1;
+        else if (items.has(item.fullname)) duplicates += 1;
+        else items.set(item.fullname, item);
+      }
+    });
+    return { filename, rowCount, rejected, duplicates, items: Array.from(items.values()) };
+  }
+
   Reddit.RedditScanner = RedditScanner;
   Reddit.importArchiveCsv = importArchiveCsv;
+  Reddit.importArchiveCsvAsync = importArchiveCsvAsync;
 })();
 
 /* src/reddit/removal-service.js */
@@ -1402,9 +1497,9 @@
     constructor(client, options = {}) {
       this.client = client;
       this.deleteUneditablePosts = options.deleteUneditablePosts === true;
-      this.verifyOverwrite = options.verifyOverwrite !== false;
-      this.verifyOwnership = options.verifyOwnership !== false;
-      this.verifyDeletion = options.verifyDeletion !== false;
+      this.verifyOverwrite = true;
+      this.verifyOwnership = true;
+      this.verifyDeletion = true;
       this.replacementLength = Math.max(8, Math.min(128, Number(options.replacementLength) || 24));
       this.minimumSettleMs = Math.max(250, Number(options.minimumSettleMs) || 900);
       this.maximumSettleMs = Math.max(this.minimumSettleMs, Number(options.maximumSettleMs) || 1_500);
@@ -1457,7 +1552,12 @@
     }
 
     async ensureOwnership(item, state) {
-      if (!this.verifyOwnership || state.ownershipVerified) return;
+      if (typeof this.client.inspectTarget === 'function') {
+        const target = await this.client.inspectTarget(item.fullname);
+        if (!target.available || !target.owned) throw new Core.ApiError('Ownership could not be verified.', { code: 'OWNERSHIP_NOT_VERIFIED' });
+        if (target.editable !== (item.editable !== false)) throw new Core.ApiError('Live editability differs from the reviewed batch. Prepare a new review.', { code: 'EDITABILITY_CHANGED' });
+        return;
+      }
       if (typeof this.client.verifyOwnership !== 'function') {
         throw new Core.ApiError('The Reddit adapter cannot verify item ownership.', {
           code: 'OWNERSHIP_CHECK_UNAVAILABLE'
@@ -1486,15 +1586,21 @@
           { code: 'DELETE_RESULT_UNCERTAIN' }
         );
       }
-      this.states.delete(item.fullname);
+      state.completed = true;
       return true;
     }
 
     isAmbiguousMutationError(error) {
-      return error?.code === 'NETWORK_ERROR' || (error?.retryable && Number(error?.status) >= 500);
+      return ['NETWORK_ERROR', 'RESPONSE_LOST', 'INVALID_JSON', 'UNRECOGNIZED_RESPONSE'].includes(error?.code)
+        || Number(error?.status) >= 500
+        || !(error instanceof Core.ToolboxError);
     }
 
     async remove(item, context = {}) {
+      const prefix = item?.kind === 'comment' ? 't1' : item?.kind === 'post' ? 't3' : '';
+      if (!prefix || !new RegExp(`^${prefix}_[a-z0-9]+$`).test(item.fullname)) {
+        throw new Core.ApiError('The item does not have a valid exact content ID.', { code: 'INVALID_TARGET' });
+      }
       const directDelete = item.kind === 'post' && item.editable === false;
       if (directDelete && !this.deleteUneditablePosts) {
         this.report(context, 'skipped', { reason: 'post-has-no-editable-body' });
@@ -1507,6 +1613,7 @@
       }
 
       const state = this.stateFor(item.fullname);
+      if (state.completed) return { status: 'skipped', reason: 'already-completed', deleted: true };
       if (state.deleteSent) {
         this.report(context, 'verifying-deletion');
         await this.verifyDeleted(item, state);
@@ -1525,6 +1632,9 @@
       await this.ensureOwnership(item, state);
 
       if (directDelete) {
+        await context.beforeMutation?.();
+        await this.ensureSession(context);
+        await this.ensureOwnership(item, state);
         this.report(context, 'deleting-direct');
         state.deleteSent = true;
         try {
@@ -1558,10 +1668,13 @@
           () => this.client.verifyText(item.fullname, state.replacement)
         );
         if (alreadySaved) state.edited = true;
-        else state.editSent = false;
+        else throw new Core.PauseRequiredError('The previous overwrite remains uncertain. No edit or delete was repeated.', { code: 'OVERWRITE_RESULT_UNCERTAIN' });
       }
 
       if (!state.edited) {
+        await context.beforeMutation?.();
+        await this.ensureSession(context);
+        await this.ensureOwnership(item, state);
         this.report(context, 'overwriting');
         state.editSent = true;
         try {
@@ -1577,8 +1690,7 @@
             () => this.client.verifyText(item.fullname, state.replacement)
           );
           if (!saved) {
-            state.editSent = false;
-            throw error;
+            throw new Core.PauseRequiredError('The overwrite may have been sent, but its saved text cannot be confirmed. No delete was sent.', { code: 'OVERWRITE_RESULT_UNCERTAIN' });
           }
           state.edited = true;
         }
@@ -1594,13 +1706,19 @@
           () => this.client.verifyText(item.fullname, state.replacement)
         );
         if (!verified) {
-          throw new Core.ApiError('The overwrite could not be verified, so the item was not deleted.', {
+          throw new Core.PauseRequiredError('The overwrite could not be verified, so the item was not deleted.', {
             code: 'OVERWRITE_NOT_VERIFIED',
-            retryable: true
           });
         }
       }
 
+      await context.beforeMutation?.();
+      await this.ensureSession(context);
+      await this.ensureOwnership(item, state);
+      // A pause can last arbitrarily long; verify again at the deletion boundary.
+      if (!await this.client.verifyText(item.fullname, state.replacement)) {
+        throw new Core.PauseRequiredError('The saved replacement changed before deletion. No delete was sent.', { code: 'OVERWRITE_NOT_VERIFIED' });
+      }
       this.report(context, 'deleting');
       state.deleteSent = true;
       try {
@@ -1633,8 +1751,8 @@
 
   globalThis.RedditToolbox.UI.styles = String.raw`
     :host {
-      --rt-accent: #ff4500;
-      --rt-accent-hover: #e03d00;
+      --rt-accent: #b83200;
+      --rt-accent-hover: #9c2b00;
       --rt-bg: #ffffff;
       --rt-bg-subtle: #f6f7f8;
       --rt-border: #d6d9dc;
@@ -1650,13 +1768,18 @@
     }
 
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    summary { cursor: pointer; color: var(--rt-muted); font-weight: 600; }
+    summary:focus-visible { outline: 2px solid var(--rt-accent); outline-offset: 3px; }
+    details[open] > summary { margin-bottom: 12px; }
+    .advanced > .grid, .advanced > .checks { margin-bottom: 12px; }
     button, input, select, textarea { font: inherit; }
     button { cursor: pointer; }
     button:disabled { cursor: not-allowed; opacity: .5; }
 
     .launcher {
       align-items: center;
-      background: var(--rt-accent);
+      background: #b83200;
       border: 3px solid transparent;
       border-radius: 999px;
       bottom: 20px;
@@ -1690,7 +1813,7 @@
     .launcher-label { pointer-events: none; }
     .launcher-badge {
       align-items: center;
-      background: var(--rt-danger);
+      background: #b42318;
       border: 2px solid var(--rt-bg);
       border-radius: 999px;
       color: white;
@@ -1749,11 +1872,11 @@
 
     .icon-button:hover { background: var(--rt-bg-subtle); color: var(--rt-text); }
 
-    .content { overflow: auto; padding: 16px; }
+    .content { overflow: auto; padding: 16px; min-height: 0; }
     .section { display: grid; gap: 12px; margin-bottom: 20px; }
     .section:last-child { margin-bottom: 0; }
     .section-title { align-items: baseline; display: flex; gap: 12px; justify-content: space-between; }
-    .section-title h2 { font-size: 14px; margin: 0; }
+    .section-title h2 { font-size: 14px; margin: 0; flex-shrink: 0; }
     .section-title span { color: var(--rt-muted); font-size: 12px; text-align: right; }
 
     .notice {
@@ -1791,7 +1914,7 @@
     }
 
     input:focus, select:focus, button:focus-visible {
-      outline: 3px solid color-mix(in srgb, var(--rt-accent) 28%, transparent);
+      outline: 2px solid var(--rt-accent);
       outline-offset: 1px;
     }
 
@@ -1811,9 +1934,9 @@
     }
 
     .button:hover:not(:disabled) { background: var(--rt-bg-subtle); }
-    .button.primary { background: var(--rt-accent); border-color: var(--rt-accent); color: white; }
+    .button.primary { background: #b83200; border-color: #b83200; color: white; }
     .button.primary:hover:not(:disabled) { background: var(--rt-accent-hover); }
-    .button.danger { background: var(--rt-danger); border-color: var(--rt-danger); color: white; }
+    .button.danger { background: #b42318; border-color: #b42318; color: white; }
     .button.link { border-color: transparent; padding-inline: 8px; }
 
     .file-input { display: none; }
@@ -1836,7 +1959,7 @@
     .preview-empty { color: var(--rt-muted); padding: 18px; text-align: center; }
     .item { border-bottom: 1px solid var(--rt-border); display: grid; gap: 3px; padding: 10px 11px; }
     .item:last-child { border-bottom: 0; }
-    .item-head { align-items: center; display: flex; gap: 7px; }
+    .item-head { align-items: center; display: flex; flex-wrap: wrap; gap: 7px; overflow-wrap: anywhere; }
     .kind { color: var(--rt-accent); font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
     .subreddit { font-weight: 700; }
     .date { color: var(--rt-muted); font-size: 11px; margin-left: auto; }
@@ -1881,7 +2004,9 @@
         --rt-danger: #f04438;
         --rt-warning: #f79009;
         --rt-success: #32d583;
+        --rt-accent: #ff865c;
       }
+      .launcher.paused, .launcher.completed, .launcher.failed { color: #17191a; }
       .notice { background: #3a2219; border-color: #713b21; color: #ffd6ae; }
     }
 
@@ -1928,11 +2053,11 @@
   });
 
   const staticMarkup = String.raw`
-    <button class="launcher" type="button" title="Open Reddit Toolbox" aria-label="Open Reddit Toolbox">
+    <button class="launcher" type="button" title="Open Reddit Toolbox" aria-label="Open Reddit Toolbox" aria-expanded="false" aria-controls="rt-panel">
       <span class="launcher-label">RT</span>
       <span class="launcher-badge" hidden></span>
     </button>
-    <aside class="panel" role="dialog" aria-label="Reddit Toolbox" aria-modal="false">
+    <aside class="panel" id="rt-panel" role="dialog" aria-label="Reddit Toolbox" aria-modal="false">
       <header class="header">
         <div class="brand">
           <strong>Reddit Toolbox</strong>
@@ -1944,8 +2069,9 @@
       <div class="content">
         <section class="section">
           <div class="notice">
-            One confirmation starts the entire selected batch. No per-item clicks are required. Keep this Reddit tab open; the batch continues while this panel is closed and pauses only when Reddit needs attention or you press Pause or Stop.
+            One confirmation starts the entire selected batch. No per-item clicks are required. Keep this tab open; the batch continues while this panel is closed.
           </div>
+          <div class="status-line">Live connection is pending Reddit API approval and OAuth setup. Local archive import is available.</div>
         </section>
 
         <section class="section scope-section">
@@ -1984,6 +2110,11 @@
                 <option value="newest">Newest first</option>
               </select>
             </div>
+          </div>
+
+          <details class="advanced">
+            <summary>Advanced</summary>
+            <div class="grid">
             <div class="field full">
               <label for="keep-subreddits">Keep these subreddits</label>
               <input id="keep-subreddits" type="text" placeholder="askscience, personalfinance">
@@ -2022,17 +2153,20 @@
             Reddit Toolbox automatically waits through rate limits, retries temporary failures, and continues past isolated item failures. Five consecutive failures pause the batch for review.
           </div>
 
+          </details>
+
           <div class="actions">
             <button class="button primary scan" type="button">Scan history</button>
             <button class="button import" type="button">Import archive CSV</button>
             <input class="file-input archive-input" type="file" accept=".csv,text/csv" multiple>
             <button class="button build-preview" type="button">Prepare batch</button>
           </div>
-          <div class="status-line scan-status" role="status">For complete history, extract comments.csv and posts.csv from a Reddit data export.</div>
+          <div class="status-line scan-status" role="status">Profile listings can omit older history. Import comments.csv and posts.csv to include archive items.</div>
         </section>
 
         <section class="section preview-section">
-          <div class="section-title"><h2>2. Review batch</h2><span class="preview-caption">No batch prepared</span></div>
+          <div class="section-title"><h2>2. Review batch</h2></div>
+          <div class="preview-caption status-line">No batch prepared</div>
           <div class="summary">
             <div class="metric"><strong class="found-count">0</strong><span>Found</span></div>
             <div class="metric"><strong class="selected-count">0</strong><span>Selected</span></div>
@@ -2057,9 +2191,12 @@
             <div class="metric"><strong class="remaining-count">0</strong><span>Remaining</span></div>
             <div class="metric"><strong class="failed-count">0</strong><span>Failed</span></div>
             <div class="metric"><strong class="current-count">—</strong><span>Current</span></div>
+            <div class="metric"><strong class="deleted-count">0</strong><span>Deleted</span></div>
+            <div class="metric"><strong class="skipped-count">0</strong><span>Skipped</span></div>
+            <div class="metric"><strong class="elapsed-time">0s</strong><span>Elapsed</span></div>
           </div>
           <div class="current-action">Ready to run the selected batch automatically.</div>
-          <progress class="progress" value="0" max="1"></progress>
+          <progress class="progress" value="0" max="1" aria-label="Batch progress"></progress>
           <div class="status-line run-status" role="status">Idle</div>
           <div class="actions run-actions">
             <button class="button danger start" type="button" disabled>Run entire batch</button>
@@ -2067,7 +2204,7 @@
             <button class="button stop" type="button" disabled>Stop after current item</button>
             <button class="button retry" type="button" disabled>Prepare retry batch</button>
           </div>
-          <div class="log">No run activity.</div>
+          <details><summary>Run details</summary><div class="log">No run activity.</div></details>
         </section>
       </div>
     </aside>
@@ -2111,6 +2248,8 @@
       this.refs = {};
       this.profileItems = [];
       this.archiveItems = [];
+      this.coverage = null;
+      this.removalServices = new Map();
       this.plan = null;
       this.runner = null;
       this.removalService = null;
@@ -2125,7 +2264,8 @@
         event.preventDefault();
         event.returnValue = '';
       };
-      this.settings = { ...UI.DEFAULT_SETTINGS, ...(this.store.get('settings', {}) || {}) };
+      const saved = this.store.get('settings', {}) || {};
+      this.settings = Object.fromEntries(Object.entries(UI.DEFAULT_SETTINGS).map(([key, value]) => [key, saved[key] ?? value]));
     }
 
     mount() {
@@ -2171,6 +2311,7 @@
         confirmationPhrase: $('.confirmation-phrase'), confirmationInput: $('.confirmation-input'),
         processedCount: $('.processed-count'), remainingCount: $('.remaining-count'),
         failedCount: $('.failed-count'), currentCount: $('.current-count'),
+        deletedCount: $('.deleted-count'), skippedCount: $('.skipped-count'), elapsedTime: $('.elapsed-time'),
         currentAction: $('.current-action'), progress: $('.progress'), runStatus: $('.run-status'),
         start: $('.start'), pause: $('.pause'), stop: $('.stop'), retry: $('.retry'), log: $('.log')
       };
@@ -2197,26 +2338,31 @@
 
       for (const input of this.shadow.querySelectorAll('input, select')) {
         if (input === this.refs.archiveInput || input === this.refs.confirmationInput) continue;
-        input.addEventListener('change', () => {
+        const changed = () => {
+          if (this.busy) return;
           this.settings = this.readSettingsFromForm();
           this.store.set('settings', this.settings);
           if (this.plan) this.invalidatePlan('Settings changed. Prepare the batch again.');
-        });
+        };
+        input.addEventListener('change', changed);
+        input.addEventListener('input', changed);
       }
     }
 
     open() {
       this.refs.panel.classList.add('open');
+      this.refs.launcher.setAttribute('aria-expanded', 'true');
       this.refs.close.focus();
     }
 
     close() {
       this.refs.panel.classList.remove('open');
+      this.refs.launcher.setAttribute('aria-expanded', 'false');
       this.refs.launcher.focus();
     }
 
     toggle() {
-      this.refs.panel.classList.toggle('open');
+      if (this.refs.panel.classList.contains('open')) this.close(); else this.open();
     }
 
     writeSettingsToForm() {
@@ -2275,8 +2421,8 @@
     }
 
     ensureClient() {
-      this.client ||= new Reddit.RedditSessionClient();
-      return this.client;
+      if (this.client) return this.client;
+      throw new Core.AuthError('Reddit API approval and an approved OAuth connection are required before live scanning or cleanup.', { code: 'API_APPROVAL_REQUIRED' });
     }
 
     setStatus(element, message, tone = '') {
@@ -2297,6 +2443,7 @@
 
   class ScopeMethods {
     async scanProfile() {
+      if (this.busy) return;
       this.settings = this.readSettingsFromForm();
       this.store.set('settings', this.settings);
       if (!this.settings.includeComments && !this.settings.includePosts) {
@@ -2320,9 +2467,10 @@
         });
         this.profileItems = result.items;
         this.username = result.username;
+        this.coverage = result.report;
         this.invalidatePlan();
         const truncated = [result.report.comments, result.report.posts].some((entry) => entry?.truncated);
-        const note = truncated ? ' The scan reached its safety page cap; import your Reddit archive for older items.' : '';
+        const note = truncated ? ' The listing ended early or reached a limit; import your Reddit archive for older items.' : ' Profile-visible history can omit older items.';
         this.setStatus(this.refs.scanStatus, `Found ${result.items.length} profile items for u/${result.username}.${note}`, 'success');
         this.renderCounts();
       } catch (error) {
@@ -2334,6 +2482,7 @@
     }
 
     async importArchive(fileList) {
+      if (this.busy) return;
       const files = Array.from(fileList || []);
       if (!files.length) return;
       this.busy = true;
@@ -2342,9 +2491,11 @@
         const imported = [];
         const messages = [];
         for (const file of files) {
-          const result = Reddit.importArchiveCsv(await file.text(), file.name);
-          imported.push(...result.items);
-          messages.push(`${file.name}: ${result.items.length}/${result.rowCount}`);
+          const result = await Reddit.importArchiveCsvAsync(await file.text(), file.name, {
+            onProgress: (count) => this.setStatus(this.refs.scanStatus, `${file.name}: ${count} rows read locally…`)
+          });
+          for (const item of result.items) imported.push(item);
+          messages.push(`${file.name}: ${result.items.length} accepted, ${result.rejected} rejected, ${result.duplicates} duplicates`);
         }
         this.archiveItems = Reddit.mergeItems(this.archiveItems, imported);
         this.invalidatePlan();
@@ -2363,19 +2514,22 @@
       }
     }
 
-    buildPreview() {
+    async buildPreview() {
+      if (this.busy) return;
+      this.busy = true;
+      this.refreshControls();
       try {
         this.settings = this.readSettingsFromForm();
         this.store.set('settings', this.settings);
         const allItems = this.allItems();
         if (!allItems.length) throw new Error('Scan your profile or import Reddit archive CSV files first.');
+        const session = await this.ensureClient().getSession();
+        this.username = session.username;
         const selection = Core.selectItems(allItems, {
           ...this.settings,
           keepSubreddits: this.settings.keepSubreddits
         });
-        this.removalService = null;
-        this.removalServiceClient = null;
-        this.plan = Core.createPlan(selection.selected, this.settings);
+        this.plan = Core.createPlan(selection.selected, { ...this.settings, accountId: this.username.toLowerCase() });
         this.plan.selectionSkipped = selection.skipped;
         this.refs.confirmationInput.value = '';
         this.renderPlan();
@@ -2386,13 +2540,14 @@
         );
       } catch (error) {
         this.setStatus(this.refs.scanStatus, UI.compactError(error), 'error');
+      } finally {
+        this.busy = false;
+        this.refreshControls();
       }
     }
 
     invalidatePlan(message = '') {
       this.plan = null;
-      this.removalService = null;
-      this.removalServiceClient = null;
       this.refs.confirmationInput.value = '';
       this.refs.confirmationPhrase.textContent = 'DELETE 0 ITEMS';
       this.refs.selectedCount.textContent = '0';
@@ -2401,6 +2556,9 @@
       this.refs.processedCount.textContent = '0';
       this.refs.remainingCount.textContent = '0';
       this.refs.failedCount.textContent = '0';
+      this.refs.deletedCount.textContent = '0';
+      this.refs.skippedCount.textContent = '0';
+      this.refs.elapsedTime.textContent = '0s';
       this.refs.currentCount.textContent = '—';
       this.refs.previewCaption.textContent = 'No batch prepared';
       this.refs.currentAction.textContent = 'Ready to run the selected batch automatically.';
@@ -2426,12 +2584,26 @@
       this.refs.selectedCount.textContent = String(contents.length);
       this.refs.commentCount.textContent = String(contents.filter((item) => item.kind === 'comment').length);
       this.refs.postCount.textContent = String(contents.filter((item) => item.kind === 'post').length);
-      this.refs.previewCaption.textContent = `Automated batch ${this.plan.digest}`;
+      const editable = contents.filter((item) => item.editable !== false).length;
+      const uneditable = contents.length - editable;
+      const source = this.profileItems.length && this.archiveItems.length ? 'Combined history'
+        : this.archiveItems.length ? 'Archive-imported history' : 'Profile-visible history';
+      const incomplete = Object.values(this.coverage || {}).some((entry) => entry?.truncated);
+      const bounds = contents.reduce((range, item) => [Math.min(range[0], item.createdAt), Math.max(range[1], item.createdAt)], [Infinity, -Infinity]);
+      const span = contents.length ? `${UI.dateLabel(bounds[0])} – ${UI.dateLabel(bounds[1])}` : 'No dates';
+      const filters = Core.normalizeFilters(this.settings);
+      const preserved = [filters.keepSubreddits.length ? `keep ${filters.keepSubreddits.map((name) => `r/${name}`).join(', ')}` : '',
+        filters.keepScoreAtOrAbove !== null ? `keep score ≥ ${filters.keepScoreAtOrAbove}` : '',
+        filters.textIncludes ? 'text filter active' : ''].filter(Boolean).join('; ');
+      this.refs.previewCaption.textContent = `u/${this.plan.options.accountId} · ${source}${incomplete ? ' (listing limited)' : ''}. ${editable} overwrite then delete; ${uneditable} ${this.plan.options.deleteUneditablePosts ? 'direct delete' : 'will skip'}. ${span}; ${filters.sortOrder} first. ${preserved}. Lifetime completeness is not established.`;
       this.refs.confirmationPhrase.textContent = this.plan.confirmation;
       this.refs.preview.replaceChildren();
       this.refs.processedCount.textContent = '0';
       this.refs.remainingCount.textContent = String(contents.length);
       this.refs.failedCount.textContent = '0';
+      this.refs.deletedCount.textContent = '0';
+      this.refs.skippedCount.textContent = '0';
+      this.refs.elapsedTime.textContent = '0s';
       this.refs.currentCount.textContent = '—';
       this.refs.currentAction.textContent = 'Ready to run the selected batch automatically.';
       this.setStatus(this.refs.runStatus, contents.length
@@ -2469,7 +2641,7 @@
           const status = document.createElement('div');
           status.className = `item-status ${queueItem.status}`;
           status.textContent = item.kind === 'post' && !item.editable
-            ? 'Queued · direct delete (explicitly enabled)'
+            ? (this.plan.options.deleteUneditablePosts ? 'Queued · direct delete (explicitly enabled)' : 'Will skip · direct deletion is disabled')
             : 'Queued · automatic overwrite, verification, and deletion';
           row.append(head, snippet, status);
           this.refs.preview.append(row);
@@ -2537,9 +2709,9 @@
     refreshControls() {
       const active = Boolean(this.runner && ACTIVE_STATES.has(this.runner.state));
       const locked = Boolean(active || this.busy);
-      const summary = this.plan ? Core.planSummary(this.plan) : Core.planSummary(null);
+      const summary = active ? this.runner.progress().summary : Core.planSummary(this.plan);
       const confirmed = Boolean(
-        this.plan
+        !locked && this.plan
         && summary.ready > 0
         && Core.isPlanCurrent(this.plan)
         && this.refs.confirmationInput.value.trim() === this.plan.confirmation
@@ -2591,13 +2763,10 @@
         this.refs.launcher.title = 'Batch stopped';
         return;
       }
-      if (state === 'completed') {
+      if (state === 'completed' || state === 'completed-with-failures') {
         this.refs.launcher.classList.add(current.failed ? 'failed' : 'completed');
         this.refs.launcherLabel.textContent = current.failed ? '!' : '✓';
         this.refs.launcher.title = current.failed ? 'Batch completed with failures' : 'Batch completed';
-        this.completionResetTimer = setTimeout(() => {
-          if (!this.runner || !ACTIVE_STATES.has(this.runner.state)) this.setLauncherState('idle');
-        }, 5_000);
         return;
       }
 
@@ -2632,6 +2801,10 @@
       this.refs.processedCount.textContent = String(summary.processed);
       this.refs.remainingCount.textContent = String(summary.remaining);
       this.refs.failedCount.textContent = String(summary.failed);
+      this.refs.deletedCount.textContent = String(summary.completed);
+      this.refs.skippedCount.textContent = String(summary.skipped);
+      const started = this.plan?.startedAt ? new Date(this.plan.startedAt).getTime() : Date.now();
+      this.refs.elapsedTime.textContent = `${Math.max(0, Math.floor((Date.now() - started) / 1000))}s`;
       this.refs.currentCount.textContent = event.currentNumber ? `${event.currentNumber}/${summary.total}` : '—';
       return summary;
     }
@@ -2646,7 +2819,7 @@
           this.refs.currentAction.textContent = 'Starting the automated batch…';
           break;
         case 'item-started':
-          this.log(`Item ${event.index + 1}/${event.total} started: ${event.queueItem.content.fullname}.`);
+          this.log(`Item ${event.index + 1}/${event.total} started.`);
           this.refs.currentAction.textContent = `Item ${event.index + 1}/${event.total} · starting`;
           break;
         case 'item-phase':
@@ -2739,6 +2912,11 @@
       if (this.refs.confirmationInput.value.trim() !== this.plan.confirmation) return;
 
       this.settings = this.readSettingsFromForm();
+      const expectedOptions = { ...this.settings, accountId: this.plan.options.accountId };
+      if (Core.planDigest(this.plan.items.map((item) => item.content), expectedOptions) !== this.plan.digest || !this.plan.options.accountId) {
+        this.invalidatePlan('The account or settings need a fresh review. Prepare the batch again.');
+        return;
+      }
       this.busy = true;
       this.refreshControls();
       this.logLines = [];
@@ -2747,20 +2925,20 @@
       this.setStatus(this.refs.runStatus, 'Verifying the Reddit session before starting…');
       try {
         const client = this.ensureClient();
-        const session = await client.getSession(true);
+        const session = await client.assertSession(this.plan.options.accountId, true);
         this.username = session.username;
-        const reuseService = Boolean(
-          this.plan.retryOf
-          && this.removalService
-          && this.removalServiceClient === client
-        );
-        const service = reuseService
-          ? this.removalService
-          : new Reddit.RedditRemovalService(client, {
+        const serviceKey = this.plan.options.accountId;
+        let service = this.removalServices.get(serviceKey);
+        if (!service || service.client !== client) {
+          service = new Reddit.RedditRemovalService(client, {
             ...this.plan.options,
-            expectedUsername: session.username,
+            expectedUsername: this.plan.options.accountId,
             randomSource: globalThis.crypto
           });
+          this.removalServices.set(serviceKey, service);
+        }
+        service.deleteUneditablePosts = this.plan.options.deleteUneditablePosts;
+        service.replacementLength = this.plan.options.replacementLength;
         this.removalService = service;
         this.removalServiceClient = client;
         this.runner = new Core.BatchRunner((item, context) => service.remove(item, context), {
@@ -2799,7 +2977,7 @@
       if (this.runner.state === 'paused') {
         this.setStatus(this.refs.runStatus, 'Refreshing the Reddit session before resuming…');
         try {
-          await this.ensureClient().getSession(true);
+          await this.ensureClient().assertSession(this.plan.options.accountId, true);
           this.runner.resume();
         } catch (error) {
           this.setStatus(this.refs.runStatus, UI.compactError(error), 'error');
@@ -2853,27 +3031,20 @@
       if (!this.plan) return;
       const payload = {
         exportedAt: new Date().toISOString(),
-        username: this.username || null,
-        planId: this.plan.id,
-        planDigest: this.plan.digest,
         mode: this.plan.mode,
-        retryOf: this.plan.retryOf,
         summary: Core.planSummary(this.plan),
-        items: this.plan.items.map((item) => ({
-          fullname: item.content.fullname,
+        items: this.plan.items.map((item, index) => ({
+          item: index + 1,
           kind: item.content.kind,
-          subreddit: item.content.subreddit,
-          permalink: item.content.permalink,
-          createdAt: new Date(item.content.createdAt).toISOString(),
           status: item.status,
           phase: item.phase,
           attempts: item.attempts,
           outcome: item.outcome,
-          error: item.error
+          error: item.error ? { code: item.error.code } : null
         }))
       };
       Core.downloadText(
-        `${UI.safeFilenamePart(this.username)}-reddit-toolbox-log-${Date.now()}.json`,
+        `reddit-toolbox-log-${Date.now()}.json`,
         JSON.stringify(payload, null, 2)
       );
     }

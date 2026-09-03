@@ -17,7 +17,7 @@ const items = [
 
 test('createPlan binds one automated-batch confirmation to targets and options', () => {
   const plan = Core.createPlan(items, { verifyOverwrite: true, replacementLength: 24 }, 1_000);
-  assert.equal(plan.version, 2);
+  assert.equal(plan.version, 3);
   assert.equal(plan.mode, 'automated-batch');
   assert.equal(plan.confirmation, 'DELETE 2 ITEMS');
   assert.equal(plan.items.length, 2);

@@ -5,6 +5,7 @@
 
   class ScopeMethods {
     async scanProfile() {
+      if (this.busy) return;
       this.settings = this.readSettingsFromForm();
       this.store.set('settings', this.settings);
       if (!this.settings.includeComments && !this.settings.includePosts) {
@@ -28,9 +29,10 @@
         });
         this.profileItems = result.items;
         this.username = result.username;
+        this.coverage = result.report;
         this.invalidatePlan();
         const truncated = [result.report.comments, result.report.posts].some((entry) => entry?.truncated);
-        const note = truncated ? ' The scan reached its safety page cap; import your Reddit archive for older items.' : '';
+        const note = truncated ? ' The listing ended early or reached a limit; import your Reddit archive for older items.' : ' Profile-visible history can omit older items.';
         this.setStatus(this.refs.scanStatus, `Found ${result.items.length} profile items for u/${result.username}.${note}`, 'success');
         this.renderCounts();
       } catch (error) {
@@ -42,6 +44,7 @@
     }
 
     async importArchive(fileList) {
+      if (this.busy) return;
       const files = Array.from(fileList || []);
       if (!files.length) return;
       this.busy = true;
@@ -50,9 +53,11 @@
         const imported = [];
         const messages = [];
         for (const file of files) {
-          const result = Reddit.importArchiveCsv(await file.text(), file.name);
-          imported.push(...result.items);
-          messages.push(`${file.name}: ${result.items.length}/${result.rowCount}`);
+          const result = await Reddit.importArchiveCsvAsync(await file.text(), file.name, {
+            onProgress: (count) => this.setStatus(this.refs.scanStatus, `${file.name}: ${count} rows read locally…`)
+          });
+          for (const item of result.items) imported.push(item);
+          messages.push(`${file.name}: ${result.items.length} accepted, ${result.rejected} rejected, ${result.duplicates} duplicates`);
         }
         this.archiveItems = Reddit.mergeItems(this.archiveItems, imported);
         this.invalidatePlan();
@@ -71,19 +76,22 @@
       }
     }
 
-    buildPreview() {
+    async buildPreview() {
+      if (this.busy) return;
+      this.busy = true;
+      this.refreshControls();
       try {
         this.settings = this.readSettingsFromForm();
         this.store.set('settings', this.settings);
         const allItems = this.allItems();
         if (!allItems.length) throw new Error('Scan your profile or import Reddit archive CSV files first.');
+        const session = await this.ensureClient().getSession();
+        this.username = session.username;
         const selection = Core.selectItems(allItems, {
           ...this.settings,
           keepSubreddits: this.settings.keepSubreddits
         });
-        this.removalService = null;
-        this.removalServiceClient = null;
-        this.plan = Core.createPlan(selection.selected, this.settings);
+        this.plan = Core.createPlan(selection.selected, { ...this.settings, accountId: this.username.toLowerCase() });
         this.plan.selectionSkipped = selection.skipped;
         this.refs.confirmationInput.value = '';
         this.renderPlan();
@@ -94,13 +102,14 @@
         );
       } catch (error) {
         this.setStatus(this.refs.scanStatus, UI.compactError(error), 'error');
+      } finally {
+        this.busy = false;
+        this.refreshControls();
       }
     }
 
     invalidatePlan(message = '') {
       this.plan = null;
-      this.removalService = null;
-      this.removalServiceClient = null;
       this.refs.confirmationInput.value = '';
       this.refs.confirmationPhrase.textContent = 'DELETE 0 ITEMS';
       this.refs.selectedCount.textContent = '0';
@@ -109,6 +118,9 @@
       this.refs.processedCount.textContent = '0';
       this.refs.remainingCount.textContent = '0';
       this.refs.failedCount.textContent = '0';
+      this.refs.deletedCount.textContent = '0';
+      this.refs.skippedCount.textContent = '0';
+      this.refs.elapsedTime.textContent = '0s';
       this.refs.currentCount.textContent = '—';
       this.refs.previewCaption.textContent = 'No batch prepared';
       this.refs.currentAction.textContent = 'Ready to run the selected batch automatically.';
@@ -134,12 +146,26 @@
       this.refs.selectedCount.textContent = String(contents.length);
       this.refs.commentCount.textContent = String(contents.filter((item) => item.kind === 'comment').length);
       this.refs.postCount.textContent = String(contents.filter((item) => item.kind === 'post').length);
-      this.refs.previewCaption.textContent = `Automated batch ${this.plan.digest}`;
+      const editable = contents.filter((item) => item.editable !== false).length;
+      const uneditable = contents.length - editable;
+      const source = this.profileItems.length && this.archiveItems.length ? 'Combined history'
+        : this.archiveItems.length ? 'Archive-imported history' : 'Profile-visible history';
+      const incomplete = Object.values(this.coverage || {}).some((entry) => entry?.truncated);
+      const bounds = contents.reduce((range, item) => [Math.min(range[0], item.createdAt), Math.max(range[1], item.createdAt)], [Infinity, -Infinity]);
+      const span = contents.length ? `${UI.dateLabel(bounds[0])} – ${UI.dateLabel(bounds[1])}` : 'No dates';
+      const filters = Core.normalizeFilters(this.settings);
+      const preserved = [filters.keepSubreddits.length ? `keep ${filters.keepSubreddits.map((name) => `r/${name}`).join(', ')}` : '',
+        filters.keepScoreAtOrAbove !== null ? `keep score ≥ ${filters.keepScoreAtOrAbove}` : '',
+        filters.textIncludes ? 'text filter active' : ''].filter(Boolean).join('; ');
+      this.refs.previewCaption.textContent = `u/${this.plan.options.accountId} · ${source}${incomplete ? ' (listing limited)' : ''}. ${editable} overwrite then delete; ${uneditable} ${this.plan.options.deleteUneditablePosts ? 'direct delete' : 'will skip'}. ${span}; ${filters.sortOrder} first. ${preserved}. Lifetime completeness is not established.`;
       this.refs.confirmationPhrase.textContent = this.plan.confirmation;
       this.refs.preview.replaceChildren();
       this.refs.processedCount.textContent = '0';
       this.refs.remainingCount.textContent = String(contents.length);
       this.refs.failedCount.textContent = '0';
+      this.refs.deletedCount.textContent = '0';
+      this.refs.skippedCount.textContent = '0';
+      this.refs.elapsedTime.textContent = '0s';
       this.refs.currentCount.textContent = '—';
       this.refs.currentAction.textContent = 'Ready to run the selected batch automatically.';
       this.setStatus(this.refs.runStatus, contents.length
@@ -177,7 +203,7 @@
           const status = document.createElement('div');
           status.className = `item-status ${queueItem.status}`;
           status.textContent = item.kind === 'post' && !item.editable
-            ? 'Queued · direct delete (explicitly enabled)'
+            ? (this.plan.options.deleteUneditablePosts ? 'Queued · direct delete (explicitly enabled)' : 'Will skip · direct deletion is disabled')
             : 'Queued · automatic overwrite, verification, and deletion';
           row.append(head, snippet, status);
           this.refs.preview.append(row);

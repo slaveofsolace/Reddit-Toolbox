@@ -1,10 +1,10 @@
 # Reddit Toolbox
 
-**[Install Reddit Toolbox RC2 with Tampermonkey](https://raw.githubusercontent.com/slaveofsolace/Reddit-Toolbox/main/userscripts/reddit-toolbox.user.js)**
+**RC2 follow-up: unreleased; live connection blocked pending approved OAuth access.**
 
 Local-first, automated Reddit history cleanup for your own account. Choose comments and posts, narrow the scope, review the exact batch, confirm once, and let the toolbox process the entire selection without per-item clicks.
 
-> **RC2 status:** the automated batch engine and safety suite are complete. The current Reddit session adapter still requires authenticated acceptance testing with disposable content before this should be treated as a stable release.
+> Reddit's current rules require explicit API approval and registered OAuth authentication. This candidate disables the provisional session/modhash connection by default. Local archive import remains available. The batch behavior below is verified with synthetic data; real Reddit and Tampermonkey acceptance are still required. See [API access](docs/API_ACCESS.md).
 
 ![Reddit Toolbox preview](docs/media/reddit-toolbox-preview.svg)
 
@@ -51,10 +51,10 @@ Link and media posts have no editable body. They are skipped unless direct delet
 - **Pause batch** stops before the next operation boundary.
 - **Stop after current item** lets the in-flight item settle safely, then marks the remainder as stopped.
 - **Prepare retry batch** creates one new reviewed batch containing only failed and stopped items.
-- A browser-level exclusive lock prevents two Reddit Toolbox batches from running at the same time where the Web Locks API is available.
+- Cleanup requires Web Locks and the canonical `www.reddit.com` origin. Other origins cannot send destructive requests, and missing lock support blocks execution.
 - Reloading or navigating away never silently resumes a destructive run.
 
-## Complete history
+## History coverage
 
 Reddit profile listings may not expose an account's entire lifetime history. Request a copy of your Reddit data, extract it, and import `comments.csv` and `posts.csv`. Profile and archive records are merged by exact Reddit fullname, with live profile data preferred when both exist.
 
@@ -74,7 +74,7 @@ Requirements: Node.js 20 or newer.
 npm run check
 ```
 
-RC2 passes 54 automated tests plus final userscript syntax and integrity checks. The build has no runtime dependencies. `src/userscript-metadata.txt` and the ordered source files produce `userscripts/reddit-toolbox.user.js` deterministically.
+The current source passes 70 automated tests, including generated-userscript integration tests, plus syntax, source composition, version, and checksum checks. Isolated Chromium and Firefox fixture acceptance covers two-comment and mixed batches, cross-tab exclusion, panel closure, reload, narrow layouts, and 50,000-row imports. This is not authenticated Reddit or Tampermonkey acceptance. The build has no runtime dependencies.
 
 ## RC2 handoff
 

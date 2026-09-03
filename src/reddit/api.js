@@ -42,20 +42,29 @@
       this.origin = options.origin || globalThis.location?.origin || 'https://www.reddit.com';
       this.modhash = options.modhash || '';
       this.username = options.username || '';
+      this.requestTimeoutMs = Math.max(100, Math.min(60_000, Number(options.requestTimeoutMs) || 30_000));
       if (typeof this.fetch !== 'function') throw new Error('Fetch is unavailable.');
     }
 
     url(path) {
       const url = new URL(path, this.origin);
-      if (!/(^|\.)reddit\.com$/i.test(url.hostname)) {
-        throw new Error('Reddit Toolbox only sends requests to reddit.com.');
+      if (url.protocol !== 'https:' || url.origin !== this.origin || url.username || url.password
+        || !['www.reddit.com', 'old.reddit.com', 'new.reddit.com', 'sh.reddit.com'].includes(url.hostname)) {
+        throw new Error('Reddit Toolbox only sends requests to its approved Reddit origin.');
       }
       return url;
     }
 
     async readResponse(response) {
       const contentType = response.headers?.get?.('content-type') || '';
-      const text = await response.text();
+      // Interpret definite HTTP rejection before attempting to read a possibly broken body.
+      if (response.status === 429) throw new Core.RateLimitError('Reddit asked the tool to slow down.', retryAfterMilliseconds(response));
+      if (response.status === 401) throw new Core.AuthError('Your Reddit session expired. Sign in again, then resume.', { status: 401 });
+      if (response.status === 403) throw new Core.PauseRequiredError('Reddit blocked this request. Check the page for an account notice.', { code: 'REDDIT_FORBIDDEN', status: 403 });
+      let text;
+      try { text = await response.text(); } catch {
+        throw new Core.ApiError('Reddit response was interrupted.', { code: 'RESPONSE_LOST', status: response.status, retryable: true });
+      }
       let payload = null;
       if (text && (contentType.includes('json') || /^[\s]*[\[{]/.test(text))) {
         try {
@@ -64,28 +73,11 @@
           throw new Core.ApiError('Reddit returned malformed JSON.', {
             code: 'INVALID_JSON',
             status: response.status,
-            retryable: response.status >= 500
+            retryable: true
           });
         }
       }
 
-      if (response.status === 429) {
-        throw new Core.RateLimitError(
-          'Reddit asked the tool to slow down.',
-          retryAfterMilliseconds(response)
-        );
-      }
-      if (response.status === 401) {
-        throw new Core.AuthError('Your Reddit session expired. Sign in again, then resume.', {
-          status: response.status
-        });
-      }
-      if (response.status === 403) {
-        throw new Core.PauseRequiredError(
-          'Reddit blocked this request. Check the page for a challenge or account notice, then resume.',
-          { code: 'REDDIT_FORBIDDEN', status: response.status }
-        );
-      }
       if (!response.ok) {
         throw new Core.ApiError(`Reddit returned HTTP ${response.status}.`, {
           code: `HTTP_${response.status}`,
@@ -114,50 +106,53 @@
         });
       }
 
+      if (text && (!payload || typeof payload !== 'object')) {
+        throw new Core.PauseRequiredError('Reddit returned an unrecognized response. Check the page before resuming.', { code: 'UNRECOGNIZED_RESPONSE', status: response.status });
+      }
       return payload;
     }
 
-    async getJson(path) {
-      let response;
+    async request(path, init) {
+      const url = this.url(path);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
       try {
-        response = await this.fetch(this.url(path), {
-          method: 'GET',
+        const response = await this.fetch(url, {
+          ...init,
           credentials: 'include',
-          headers: { Accept: 'application/json' }
+          cache: 'no-store',
+          redirect: 'error',
+          signal: controller.signal
         });
+        return await this.readResponse(response);
       } catch (error) {
-        throw new Core.ApiError('Could not reach Reddit.', {
+        if (error instanceof Core.ToolboxError) throw error;
+        throw new Core.ApiError('The Reddit request did not complete.', {
           code: 'NETWORK_ERROR',
-          retryable: true,
-          details: error
+          retryable: true
         });
+      } finally {
+        clearTimeout(timeout);
       }
-      return this.readResponse(response);
+    }
+
+    async getJson(path) {
+      return this.request(path, { method: 'GET', headers: { Accept: 'application/json' } });
     }
 
     async postForm(path, values) {
+      if (this.origin !== 'https://www.reddit.com') throw new Core.AuthError('Open www.reddit.com for cleanup. A single origin is required for the cross-tab lock.', { code: 'CANONICAL_ORIGIN_REQUIRED' });
       if (!this.modhash) throw new Core.AuthError('Reddit did not provide a session modhash. Refresh and sign in again.');
       const body = new URLSearchParams({ ...values, uh: this.modhash });
-      let response;
-      try {
-        response = await this.fetch(this.url(path), {
+      return this.request(path, {
           method: 'POST',
-          credentials: 'include',
           headers: {
             Accept: 'application/json',
             'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
             'X-Modhash': this.modhash
           },
           body
-        });
-      } catch (error) {
-        throw new Core.ApiError('Could not reach Reddit.', {
-          code: 'NETWORK_ERROR',
-          retryable: true,
-          details: error
-        });
-      }
-      return this.readResponse(response);
+      });
     }
 
     async getSession(requireModhash = false) {
@@ -168,7 +163,7 @@
       this.modhash = String(data.modhash || '');
       if (requireModhash && !this.modhash) {
         throw new Core.AuthError(
-          'Reddit found the signed-in account but did not expose an action token on this surface. Open old.reddit.com, reload, and retry.',
+          'The provisional session adapter did not receive an action token. Live access requires approved OAuth setup.',
           { code: 'MODHASH_MISSING' }
         );
       }
@@ -179,10 +174,9 @@
       const session = await this.getSession(requireModhash);
       if (expectedUsername && !sameUsername(session.username, expectedUsername)) {
         throw new Core.PauseRequiredError(
-          `The signed-in Reddit account changed from u/${expectedUsername} to u/${session.username}. Switch back before resuming.`,
+          'The signed-in Reddit account changed. Switch back to the reviewed account before resuming.',
           {
             code: 'ACCOUNT_CHANGED',
-            details: { expectedUsername, actualUsername: session.username }
           }
         );
       }
@@ -202,7 +196,8 @@
       if (options.after) params.set('after', options.after);
       const path = `/user/${encodeURIComponent(this.username)}/${section}.json?${params}`;
       const payload = await this.getJson(path);
-      const children = Array.isArray(payload?.data?.children) ? payload.data.children : [];
+      if (!Array.isArray(payload?.data?.children)) throw new Core.ApiError('Reddit did not return a valid history listing.', { code: 'INVALID_LISTING' });
+      const children = payload.data.children;
       return {
         items: children.map(Reddit.listingChildToItem).filter(Boolean),
         after: payload?.data?.after || null
@@ -220,15 +215,30 @@
     }
 
     async getThing(fullname) {
+      if (!/^t[13]_[a-z0-9]+$/.test(fullname)) throw new Core.ApiError('Invalid content ID.', { code: 'INVALID_TARGET' });
       const params = new URLSearchParams({ id: fullname, raw_json: '1' });
       const payload = await this.getJson(`/api/info.json?${params}`);
-      const child = payload?.data?.children?.[0];
-      if (!child || !['t1', 't3'].includes(child.kind)) return null;
+      const children = payload?.data?.children;
+      if (!Array.isArray(children)) throw new Core.PauseRequiredError('Reddit did not return a valid item listing.', { code: 'INVALID_LISTING' });
+      if (!children.length) return null;
+      const child = children[0];
+      if (children.length !== 1 || !['t1', 't3'].includes(child.kind)) throw new Core.PauseRequiredError('Reddit returned an unexpected target.', { code: 'TARGET_MISMATCH' });
       const actualFullname = Reddit.normalizeFullname(
         child.data?.name || child.data?.id,
         child.kind === 't1' ? 'comment' : 'post'
       );
-      return actualFullname === fullname ? child : null;
+      if (actualFullname !== fullname) throw new Core.PauseRequiredError('Reddit returned a different target.', { code: 'TARGET_MISMATCH' });
+      return child;
+    }
+
+    async inspectTarget(fullname) {
+      const child = await this.getThing(fullname);
+      if (!child) return { available: false, owned: false };
+      return {
+        available: true,
+        owned: sameUsername(child.data?.author, this.username),
+        editable: child.kind === 't1' || child.data?.is_self === true
+      };
     }
 
     async verifyOwnership(fullname) {
@@ -249,10 +259,10 @@
 
     async isDeleted(fullname) {
       const child = await this.getThing(fullname);
-      if (!child) return true;
+      if (!child) return false;
       const author = String(child.data?.author || '').toLowerCase();
       const text = String(child.kind === 't1' ? child.data?.body ?? '' : child.data?.selftext ?? '').toLowerCase();
-      return (!author || author === '[deleted]') && ['', '[deleted]', '[removed]'].includes(text);
+      return author === '[deleted]' && ['', '[deleted]'].includes(text);
     }
 
     async delete(fullname) {

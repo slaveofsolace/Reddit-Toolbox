@@ -82,11 +82,7 @@
     const permalink = normalizePermalink(
       row.permalink || row.url || row.link || row.path || ''
     );
-    let rawId = row.fullname || row.name || row.id || row.comment_id || row.post_id || '';
-    if (!rawId && permalink) {
-      const match = permalink.match(/\/comments\/([a-z0-9]+)(?:\/[^/]+)?(?:\/([a-z0-9]+))?/i);
-      rawId = kind === 'comment' ? match?.[2] || '' : match?.[1] || '';
-    }
+    const rawId = row.fullname || row.name || row.id || row.comment_id || row.post_id || '';
     const fullname = normalizeFullname(rawId, kind);
     const createdAt = parseTimestamp(
       row.created_utc || row.created || row.date || row.timestamp || row.created_at
@@ -102,7 +98,7 @@
       kind,
       createdAt,
       subreddit: String(row.subreddit || subredditFromPermalink(permalink)),
-      score: Number.isFinite(Number(row.score)) ? Number(row.score) : null,
+      score: row.score !== '' && row.score !== undefined && Number.isFinite(Number(row.score)) ? Number(row.score) : null,
       permalink,
       title: kind === 'post' ? String(row.title || '') : '',
       text,
@@ -115,14 +111,14 @@
 
   function mergeItems(...collections) {
     const merged = new Map();
-    for (const item of collections.flat()) {
+    for (const collection of collections) for (const item of (Array.isArray(collection) ? collection : [collection])) {
       if (!item?.fullname) continue;
       const current = merged.get(item.fullname);
       if (!current) {
         merged.set(item.fullname, { ...item });
         continue;
       }
-      const profile = item.source === 'profile' ? item : current.source === 'profile' ? current : null;
+      const profile = item.source?.includes('profile') ? item : current.source?.includes('profile') ? current : null;
       const preferred = profile || item;
       merged.set(item.fullname, {
         ...current,

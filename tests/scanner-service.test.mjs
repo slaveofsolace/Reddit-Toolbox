@@ -80,8 +80,8 @@ test('removal service edits, verifies, then deletes', async () => {
   });
   const result = await service.remove({ fullname: 't1_a', kind: 'comment', editable: true });
   assert.equal(result.deleted, true);
-  assert.deepEqual(calls.map((entry) => entry[0]), ['owner', 'edit', 'sleep', 'verify', 'delete', 'deleted']);
-  assert.equal(calls[1][2], 'aaaaaaaa');
+  assert.deepEqual(calls.map((entry) => entry[0]), ['owner', 'owner', 'edit', 'sleep', 'verify', 'owner', 'verify', 'delete', 'deleted']);
+  assert.equal(calls.find((entry) => entry[0] === 'edit')[2], 'aaaaaaaa');
 });
 
 test('uneditable posts are skipped unless direct deletion is enabled', async () => {

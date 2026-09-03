@@ -13,6 +13,7 @@ export function loadToolbox(options = {}) {
     URL,
     URLSearchParams,
     Blob,
+    AbortController,
     Date,
     Math,
     JSON,
@@ -32,6 +33,7 @@ export function loadToolbox(options = {}) {
     setTimeout,
     clearTimeout,
     crypto: webcrypto,
+    navigator: { locks: { request: async (_name, _options, callback) => callback({ name: _name }) } },
     ...options.globals
   });
 

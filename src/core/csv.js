@@ -3,14 +3,15 @@
 
   const { Core } = globalThis.RedditToolbox;
 
-  function parseCsv(text) {
+  function* csvRecords(text) {
     const source = String(text || '').replace(/^\uFEFF/, '');
-    const rows = [];
     let row = [];
     let field = '';
     let quoted = false;
+    let closedQuote = false;
 
     for (let index = 0; index < source.length; index += 1) {
+      if (index && index % 32_768 === 0) yield { progress: index };
       const char = source[index];
 
       if (quoted) {
@@ -19,6 +20,7 @@
           index += 1;
         } else if (char === '"') {
           quoted = false;
+          closedQuote = true;
         } else {
           field += char;
         }
@@ -26,16 +28,20 @@
       }
 
       if (char === '"') {
+        if (field || closedQuote) throw new Error('Unexpected quote in a CSV field.');
         quoted = true;
       } else if (char === ',') {
         row.push(field);
         field = '';
+        closedQuote = false;
       } else if (char === '\n') {
         row.push(field);
-        rows.push(row);
+        if (row.some((value) => value !== '')) yield { values: row };
         row = [];
         field = '';
+        closedQuote = false;
       } else if (char !== '\r') {
+        if (closedQuote) throw new Error('Unexpected text after a quoted CSV field.');
         field += char;
       }
     }
@@ -43,22 +49,54 @@
     if (quoted) throw new Error('The CSV file ends inside a quoted field.');
     if (field.length > 0 || row.length > 0) {
       row.push(field);
-      rows.push(row);
+      if (row.some((value) => value !== '')) yield { values: row };
     }
+  }
 
-    while (rows.length && rows[rows.length - 1].every((value) => value === '')) {
-      rows.pop();
-    }
-    if (!rows.length) return [];
-
-    const headers = rows.shift().map((header, index) => {
+  function csvHeaders(values) {
+    const headers = values.map((header, index) => {
       const normalized = header.trim().toLowerCase().replace(/\s+/g, '_');
       return normalized || `column_${index + 1}`;
     });
+    if (new Set(headers).size !== headers.length) throw new Error('Duplicate CSV headers.');
+    return headers;
+  }
 
-    return rows
-      .filter((values) => values.some((value) => value !== ''))
-      .map((values) => Object.fromEntries(headers.map((header, index) => [header, values[index] || ''])));
+  function csvObject(headers, values) {
+    return Object.fromEntries(headers.map((header, index) => [header, values[index] || '']));
+  }
+
+  function parseCsv(text) {
+    let headers;
+    const rows = [];
+    for (const record of csvRecords(text)) {
+      if (!record.values) continue;
+      if (!headers) headers = csvHeaders(record.values);
+      else rows.push(csvObject(headers, record.values));
+    }
+    return rows;
+  }
+
+  async function readCsvAsync(text, options = {}) {
+    let headers;
+    let count = 0;
+    const yieldTask = options.yieldTask || (() => new Promise((resolve) => setTimeout(resolve, 0)));
+    for (const record of csvRecords(text)) {
+      if (options.signal?.aborted) throw new Error('Archive import cancelled.');
+      if (!record.values) {
+        options.onProgress?.(count);
+        await yieldTask();
+      } else if (!headers) {
+        headers = csvHeaders(record.values);
+        options.onHeaders?.(headers);
+      } else {
+        count += 1;
+        options.onRow?.(csvObject(headers, record.values), record.values.length === headers.length);
+      }
+    }
+    if (!headers) throw new Error('The CSV file is empty.');
+    options.onProgress?.(count);
+    return count;
   }
 
   function toCsv(rows, columns) {
@@ -74,5 +112,6 @@
   }
 
   Core.parseCsv = parseCsv;
+  Core.readCsvAsync = readCsvAsync;
   Core.toCsv = toCsv;
 })();

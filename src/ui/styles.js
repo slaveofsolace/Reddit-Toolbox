@@ -3,8 +3,8 @@
 
   globalThis.RedditToolbox.UI.styles = String.raw`
     :host {
-      --rt-accent: #ff4500;
-      --rt-accent-hover: #e03d00;
+      --rt-accent: #b83200;
+      --rt-accent-hover: #9c2b00;
       --rt-bg: #ffffff;
       --rt-bg-subtle: #f6f7f8;
       --rt-border: #d6d9dc;
@@ -20,13 +20,18 @@
     }
 
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    summary { cursor: pointer; color: var(--rt-muted); font-weight: 600; }
+    summary:focus-visible { outline: 2px solid var(--rt-accent); outline-offset: 3px; }
+    details[open] > summary { margin-bottom: 12px; }
+    .advanced > .grid, .advanced > .checks { margin-bottom: 12px; }
     button, input, select, textarea { font: inherit; }
     button { cursor: pointer; }
     button:disabled { cursor: not-allowed; opacity: .5; }
 
     .launcher {
       align-items: center;
-      background: var(--rt-accent);
+      background: #b83200;
       border: 3px solid transparent;
       border-radius: 999px;
       bottom: 20px;
@@ -60,7 +65,7 @@
     .launcher-label { pointer-events: none; }
     .launcher-badge {
       align-items: center;
-      background: var(--rt-danger);
+      background: #b42318;
       border: 2px solid var(--rt-bg);
       border-radius: 999px;
       color: white;
@@ -119,11 +124,11 @@
 
     .icon-button:hover { background: var(--rt-bg-subtle); color: var(--rt-text); }
 
-    .content { overflow: auto; padding: 16px; }
+    .content { overflow: auto; padding: 16px; min-height: 0; }
     .section { display: grid; gap: 12px; margin-bottom: 20px; }
     .section:last-child { margin-bottom: 0; }
     .section-title { align-items: baseline; display: flex; gap: 12px; justify-content: space-between; }
-    .section-title h2 { font-size: 14px; margin: 0; }
+    .section-title h2 { font-size: 14px; margin: 0; flex-shrink: 0; }
     .section-title span { color: var(--rt-muted); font-size: 12px; text-align: right; }
 
     .notice {
@@ -161,7 +166,7 @@
     }
 
     input:focus, select:focus, button:focus-visible {
-      outline: 3px solid color-mix(in srgb, var(--rt-accent) 28%, transparent);
+      outline: 2px solid var(--rt-accent);
       outline-offset: 1px;
     }
 
@@ -181,9 +186,9 @@
     }
 
     .button:hover:not(:disabled) { background: var(--rt-bg-subtle); }
-    .button.primary { background: var(--rt-accent); border-color: var(--rt-accent); color: white; }
+    .button.primary { background: #b83200; border-color: #b83200; color: white; }
     .button.primary:hover:not(:disabled) { background: var(--rt-accent-hover); }
-    .button.danger { background: var(--rt-danger); border-color: var(--rt-danger); color: white; }
+    .button.danger { background: #b42318; border-color: #b42318; color: white; }
     .button.link { border-color: transparent; padding-inline: 8px; }
 
     .file-input { display: none; }
@@ -206,7 +211,7 @@
     .preview-empty { color: var(--rt-muted); padding: 18px; text-align: center; }
     .item { border-bottom: 1px solid var(--rt-border); display: grid; gap: 3px; padding: 10px 11px; }
     .item:last-child { border-bottom: 0; }
-    .item-head { align-items: center; display: flex; gap: 7px; }
+    .item-head { align-items: center; display: flex; flex-wrap: wrap; gap: 7px; overflow-wrap: anywhere; }
     .kind { color: var(--rt-accent); font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
     .subreddit { font-weight: 700; }
     .date { color: var(--rt-muted); font-size: 11px; margin-left: auto; }
@@ -251,7 +256,9 @@
         --rt-danger: #f04438;
         --rt-warning: #f79009;
         --rt-success: #32d583;
+        --rt-accent: #ff865c;
       }
+      .launcher.paused, .launcher.completed, .launcher.failed { color: #17191a; }
       .notice { background: #3a2219; border-color: #713b21; color: #ffd6ae; }
     }
 

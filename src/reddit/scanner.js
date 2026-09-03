@@ -69,6 +69,29 @@
     };
   }
 
+  async function importArchiveCsvAsync(text, filename, options = {}) {
+    if (!/^(comments|posts)\.csv$/i.test(filename)) throw new Error('Choose comments.csv or posts.csv from your Reddit export.');
+    const items = new Map();
+    let rejected = 0;
+    let duplicates = 0;
+    const rowCount = await Core.readCsvAsync(text, {
+      ...options,
+      onHeaders(headers) {
+        const hasId = ['fullname', 'name', 'id', 'comment_id', 'post_id'].some((name) => headers.includes(name));
+        const hasDate = ['created_utc', 'created', 'date', 'timestamp', 'created_at'].some((name) => headers.includes(name));
+        if (!hasId || !hasDate) throw new Error('The archive needs explicit item ID and date columns. IDs are not inferred from links.');
+      },
+      onRow(row, validWidth) {
+        const item = validWidth ? Reddit.archiveRowToItem(row, filename) : null;
+        if (!item) rejected += 1;
+        else if (items.has(item.fullname)) duplicates += 1;
+        else items.set(item.fullname, item);
+      }
+    });
+    return { filename, rowCount, rejected, duplicates, items: Array.from(items.values()) };
+  }
+
   Reddit.RedditScanner = RedditScanner;
   Reddit.importArchiveCsv = importArchiveCsv;
+  Reddit.importArchiveCsvAsync = importArchiveCsvAsync;
 })();
