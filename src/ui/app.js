@@ -14,9 +14,18 @@
       this.archiveItems = [];
       this.plan = null;
       this.runner = null;
+      this.removalService = null;
+      this.removalServiceClient = null;
       this.username = '';
       this.logLines = [];
       this.busy = false;
+      this.completionResetTimer = null;
+      this.beforeUnloadHandler = (event) => {
+        const state = this.runner?.state;
+        if (!['running', 'waiting', 'paused', 'stopping'].includes(state)) return;
+        event.preventDefault();
+        event.returnValue = '';
+      };
       this.settings = { ...UI.DEFAULT_SETTINGS, ...(this.store.get('settings', {}) || {}) };
     }
 
@@ -37,13 +46,16 @@
       this.bindEvents();
       this.updateDateFields();
       this.refreshControls();
+      this.setLauncherState('idle');
+      globalThis.addEventListener?.('beforeunload', this.beforeUnloadHandler);
       return this;
     }
 
     captureRefs() {
       const $ = (selector) => this.shadow.querySelector(selector);
       this.refs = {
-        launcher: $('.launcher'), panel: $('.panel'), close: $('.close'),
+        launcher: $('.launcher'), launcherLabel: $('.launcher-label'), launcherBadge: $('.launcher-badge'),
+        panel: $('.panel'), close: $('.close'),
         includeComments: $('#include-comments'), includePosts: $('#include-posts'),
         dateMode: $('#date-mode'), fromDate: $('#from-date'), throughDate: $('#through-date'),
         fromField: $('.from-field'), throughField: $('.through-field'), maxItems: $('#max-items'),
@@ -58,8 +70,10 @@
         previewCaption: $('.preview-caption'), preview: $('.preview'),
         exportBackup: $('.export-backup'), exportLog: $('.export-log'),
         confirmationPhrase: $('.confirmation-phrase'), confirmationInput: $('.confirmation-input'),
-        progress: $('.progress'), runStatus: $('.run-status'), start: $('.start'),
-        pause: $('.pause'), stop: $('.stop'), log: $('.log')
+        processedCount: $('.processed-count'), remainingCount: $('.remaining-count'),
+        failedCount: $('.failed-count'), currentCount: $('.current-count'),
+        currentAction: $('.current-action'), progress: $('.progress'), runStatus: $('.run-status'),
+        start: $('.start'), pause: $('.pause'), stop: $('.stop'), retry: $('.retry'), log: $('.log')
       };
     }
 
@@ -80,13 +94,14 @@
       this.refs.start.addEventListener('click', () => this.startRun());
       this.refs.pause.addEventListener('click', () => this.togglePause());
       this.refs.stop.addEventListener('click', () => this.stopRun());
+      this.refs.retry.addEventListener('click', () => this.prepareRetryBatch());
 
       for (const input of this.shadow.querySelectorAll('input, select')) {
         if (input === this.refs.archiveInput || input === this.refs.confirmationInput) continue;
         input.addEventListener('change', () => {
           this.settings = this.readSettingsFromForm();
           this.store.set('settings', this.settings);
-          if (this.plan) this.invalidatePlan('Settings changed. Build the preview again.');
+          if (this.plan) this.invalidatePlan('Settings changed. Prepare the batch again.');
         });
       }
     }
@@ -144,7 +159,9 @@
         verifyOverwrite: true,
         replacementLength: Math.max(8, Math.min(128, Number(this.refs.replacementLength.value) || 24)),
         minimumDelaySeconds,
-        maximumDelaySeconds
+        maximumDelaySeconds,
+        continueOnFailure: true,
+        maxConsecutiveFailures: 5
       };
     }
 

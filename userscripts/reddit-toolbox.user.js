@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Reddit Toolbox
 // @namespace    https://github.com/slaveofsolace
-// @version      1.0.0-rc.1
-// @description  Preview, overwrite, and delete your own Reddit posts and comments.
+// @version      1.0.0-rc.2
+// @description  Automatically overwrite and delete selected Reddit posts and comments in one reviewed batch.
 // @author       slaveofsolace
 // @license      MIT
 // @match        https://www.reddit.com/*
@@ -16,7 +16,7 @@
 // @grant        GM_deleteValue
 // @grant        GM_registerMenuCommand
 // @homepageURL  https://github.com/slaveofsolace/Reddit-Toolbox
-// @supportURL   https://github.com/slaveofsolace/Insta-Toolbox/issues
+// @supportURL   https://github.com/slaveofsolace/Reddit-Toolbox/issues
 // @downloadURL  https://raw.githubusercontent.com/slaveofsolace/Reddit-Toolbox/main/userscripts/reddit-toolbox.user.js
 // @updateURL    https://raw.githubusercontent.com/slaveofsolace/Reddit-Toolbox/main/userscripts/reddit-toolbox.user.js
 // ==/UserScript==
@@ -27,13 +27,13 @@
 
   const family = globalThis.ToolboxFamily || {};
   family.Core ||= {};
-  family.version = '1.0.0-rc.1';
+  family.version = '1.0.0-rc.2';
 
   const toolbox = globalThis.RedditToolbox || {};
   toolbox.Core = family.Core;
   toolbox.Reddit ||= {};
   toolbox.UI ||= {};
-  toolbox.version = '1.0.0-rc.1';
+  toolbox.version = '1.0.0-rc.2';
 
   globalThis.ToolboxFamily = family;
   globalThis.RedditToolbox = toolbox;
@@ -383,6 +383,8 @@
   'use strict';
 
   const { Core } = globalThis.RedditToolbox;
+  const PLAN_VERSION = 2;
+  const RETRYABLE_STATUSES = new Set(['failed', 'stopped']);
 
   function fnv1a(value) {
     let hash = 0x811c9dc5;
@@ -393,11 +395,28 @@
     return (hash >>> 0).toString(16).padStart(8, '0');
   }
 
+  function executionOptions(options = {}) {
+    return {
+      deleteUneditablePosts: options.deleteUneditablePosts === true,
+      verifyOverwrite: options.verifyOverwrite !== false,
+      replacementLength: Math.max(8, Math.min(128, Math.trunc(Number(options.replacementLength) || 24))),
+      continueOnFailure: options.continueOnFailure !== false,
+      maxConsecutiveFailures: Math.max(
+        1,
+        Math.min(20, Math.trunc(Number(options.maxConsecutiveFailures) || 5))
+      )
+    };
+  }
+
   function planDigest(items, options = {}) {
+    const normalized = executionOptions(options);
     const settings = [
-      options.deleteUneditablePosts === true ? 'direct-delete' : 'overwrite-only',
-      options.verifyOverwrite !== false ? 'verify' : 'no-verify',
-      Number(options.replacementLength) || 24
+      'automated-batch',
+      normalized.deleteUneditablePosts ? 'direct-delete' : 'overwrite-only',
+      normalized.verifyOverwrite ? 'verify' : 'no-verify',
+      normalized.replacementLength,
+      normalized.continueOnFailure ? 'continue' : 'stop-on-failure',
+      normalized.maxConsecutiveFailures
     ].join('|');
     const targets = (items || []).map((item) => (
       `${item.kind}:${item.fullname}:${item.editable === false ? 'direct' : 'editable'}`
@@ -407,21 +426,26 @@
 
   function createPlan(items, options = {}, now = Date.now()) {
     const targets = Array.from(items || []);
-    const digest = planDigest(targets, options);
+    const normalizedOptions = executionOptions(options);
+    const digest = planDigest(targets, normalizedOptions);
     return {
+      version: PLAN_VERSION,
+      mode: 'automated-batch',
       id: `plan-${now}-${digest}`,
       createdAt: new Date(now).toISOString(),
+      startedAt: null,
+      finishedAt: null,
+      status: 'ready',
       digest,
       confirmation: `DELETE ${targets.length} ${targets.length === 1 ? 'ITEM' : 'ITEMS'}`,
-      options: {
-        deleteUneditablePosts: options.deleteUneditablePosts === true,
-        verifyOverwrite: options.verifyOverwrite !== false,
-        replacementLength: Math.max(8, Math.min(128, Math.trunc(Number(options.replacementLength) || 24)))
-      },
+      options: normalizedOptions,
+      retryOf: null,
+      retryNumber: 0,
       items: targets.map((content, index) => ({
         id: `${digest}:${index}:${content.fullname}`,
         content,
         status: 'ready',
+        phase: 'queued',
         attempts: 0,
         startedAt: null,
         finishedAt: null,
@@ -431,7 +455,20 @@
     };
   }
 
+  function createRetryPlan(plan, now = Date.now()) {
+    if (!plan?.items || !Array.isArray(plan.items)) return null;
+    const targets = plan.items
+      .filter((item) => RETRYABLE_STATUSES.has(item.status))
+      .map((item) => item.content);
+    if (!targets.length) return null;
+    const retry = createPlan(targets, plan.options, now);
+    retry.retryOf = plan.id;
+    retry.retryNumber = Math.max(1, Number(plan.retryNumber || 0) + 1);
+    return retry;
+  }
+
   function isPlanCurrent(plan) {
+    if (plan?.version !== PLAN_VERSION || plan?.mode !== 'automated-batch') return false;
     if (!plan?.items || !Array.isArray(plan.items)) return false;
     return plan.digest === planDigest(plan.items.map((item) => item.content), plan.options);
   }
@@ -444,17 +481,28 @@
       completed: 0,
       skipped: 0,
       failed: 0,
-      stopped: 0
+      stopped: 0,
+      processed: 0,
+      remaining: 0,
+      percent: 0
     };
     for (const item of plan?.items || []) {
       summary[item.status] = (summary[item.status] || 0) + 1;
     }
+    summary.processed = summary.completed + summary.skipped + summary.failed;
+    summary.remaining = summary.ready + summary.processing + summary.stopped;
+    summary.percent = summary.total
+      ? Math.min(100, Math.round((summary.processed / summary.total) * 100))
+      : 0;
     return summary;
   }
 
+  Core.PLAN_VERSION = PLAN_VERSION;
   Core.fnv1a = fnv1a;
+  Core.executionOptions = executionOptions;
   Core.planDigest = planDigest;
   Core.createPlan = createPlan;
+  Core.createRetryPlan = createRetryPlan;
   Core.isPlanCurrent = isPlanCurrent;
   Core.planSummary = planSummary;
 })();
@@ -464,16 +512,17 @@
   'use strict';
 
   const { Core } = globalThis.RedditToolbox;
-
+  const ACTIVE_STATES = new Set(['running', 'waiting', 'paused', 'stopping']);
   const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-  class ControlledRunner {
+  class BatchRunner {
     constructor(worker, options = {}) {
       if (typeof worker !== 'function') throw new TypeError('A worker function is required.');
       this.worker = worker;
       const minimumDelayMs = Number(options.minimumDelayMs);
       const maximumDelayMs = Number(options.maximumDelayMs);
       const maxRetries = Number(options.maxRetries);
+      const maxConsecutiveFailures = Number(options.maxConsecutiveFailures);
       this.minimumDelayMs = Number.isFinite(minimumDelayMs) ? Math.max(0, minimumDelayMs) : 4_500;
       this.maximumDelayMs = Number.isFinite(maximumDelayMs)
         ? Math.max(this.minimumDelayMs, maximumDelayMs)
@@ -481,36 +530,75 @@
       this.maxRetries = Number.isFinite(maxRetries)
         ? Math.max(0, Math.min(5, Math.trunc(maxRetries)))
         : 2;
+      this.continueOnFailure = options.continueOnFailure !== false;
+      this.maxConsecutiveFailures = Number.isFinite(maxConsecutiveFailures)
+        ? Math.max(1, Math.min(20, Math.trunc(maxConsecutiveFailures)))
+        : 5;
       this.sleep = options.sleep || wait;
       this.random = options.random || Math.random;
       this.onEvent = options.onEvent || (() => {});
+      this.lockManager = options.lockManager === undefined ? globalThis.navigator?.locks : options.lockManager;
+      this.lockName = String(options.lockName || 'reddit-toolbox-cleanup');
       this.state = 'idle';
       this.stopRequested = false;
+      this.pauseReason = '';
       this.resumeResolvers = [];
+      this.plan = null;
+      this.currentIndex = -1;
+      this.consecutiveFailures = 0;
+    }
+
+    progress() {
+      const summary = Core.planSummary(this.plan);
+      const current = this.currentIndex >= 0 ? this.plan?.items?.[this.currentIndex] || null : null;
+      return {
+        summary,
+        total: summary.total,
+        processed: summary.processed,
+        remaining: summary.remaining,
+        percent: summary.percent,
+        currentIndex: this.currentIndex,
+        currentNumber: current ? this.currentIndex + 1 : 0,
+        currentFullname: current?.content?.fullname || null
+      };
     }
 
     emit(type, detail = {}) {
-      this.onEvent({ type, state: this.state, at: new Date().toISOString(), ...detail });
+      this.onEvent({
+        type,
+        state: this.state,
+        at: new Date().toISOString(),
+        ...this.progress(),
+        ...detail
+      });
     }
 
-    pause(reason = 'Paused by user.') {
-      if (this.state !== 'running') return;
+    pause(reason = 'Batch paused by user.') {
+      if (!['running', 'waiting'].includes(this.state)) return false;
       this.state = 'paused';
-      this.emit('paused', { reason });
+      this.pauseReason = reason;
+      this.emit('batch-paused', { reason });
+      return true;
     }
 
     resume() {
-      if (this.state !== 'paused') return;
+      if (this.state !== 'paused') return false;
       this.state = 'running';
+      this.pauseReason = '';
       const resolvers = this.resumeResolvers.splice(0);
       for (const resolve of resolvers) resolve();
-      this.emit('resumed');
+      this.emit('batch-resumed');
+      return true;
     }
 
     stop() {
+      if (!ACTIVE_STATES.has(this.state)) return false;
       this.stopRequested = true;
-      if (this.state === 'paused') this.resume();
+      this.state = 'stopping';
+      const resolvers = this.resumeResolvers.splice(0);
+      for (const resolve of resolvers) resolve();
       this.emit('stop-requested');
+      return true;
     }
 
     async waitWhilePaused() {
@@ -519,20 +607,45 @@
       }
     }
 
-    async waitDelay(milliseconds) {
-      let remaining = Math.max(0, Number(milliseconds) || 0);
-      while (remaining > 0 && !this.stopRequested) {
-        const step = Math.min(1_000, remaining);
+    async waitDelay(milliseconds, reason, detail = {}) {
+      let remainingMs = Math.max(0, Number(milliseconds) || 0);
+      if (!remainingMs) return !this.stopRequested;
+
+      await this.waitWhilePaused();
+      if (this.stopRequested) return false;
+      this.state = 'waiting';
+      this.emit('wait-started', { waitReason: reason, remainingMs, ...detail });
+
+      while (remainingMs > 0 && !this.stopRequested) {
+        if (this.state === 'paused') {
+          await this.waitWhilePaused();
+          if (this.stopRequested) break;
+          this.state = 'waiting';
+        }
+        const step = Math.min(1_000, remainingMs);
         await this.sleep(step);
-        remaining -= step;
+        remainingMs -= step;
+        if (remainingMs > 0 && !this.stopRequested) {
+          this.emit('wait-tick', { waitReason: reason, remainingMs, ...detail });
+        }
       }
-      return !this.stopRequested;
+
+      if (this.stopRequested) return false;
+      this.state = 'running';
+      this.emit('wait-finished', { waitReason: reason, remainingMs: 0, ...detail });
+      return true;
     }
 
     async process(queueItem, index, total) {
       queueItem.status = 'processing';
+      queueItem.phase = 'starting';
       queueItem.startedAt = new Date().toISOString();
       this.emit('item-started', { queueItem, index, total });
+
+      const reportPhase = (phase, detail = {}) => {
+        queueItem.phase = phase;
+        this.emit('item-phase', { queueItem, index, total, phase, phaseDetail: detail });
+      };
 
       for (let attempt = 0; attempt <= this.maxRetries; attempt += 1) {
         queueItem.attempts += 1;
@@ -540,16 +653,20 @@
           const outcome = await this.worker(queueItem.content, {
             attempt: attempt + 1,
             index,
-            total
+            total,
+            reportPhase,
+            isStopRequested: () => this.stopRequested
           });
           queueItem.outcome = outcome || { status: 'completed' };
           queueItem.status = outcome?.status === 'skipped' ? 'skipped' : 'completed';
+          queueItem.phase = queueItem.status;
           queueItem.finishedAt = new Date().toISOString();
+          this.consecutiveFailures = 0;
           this.emit('item-finished', { queueItem, index, total });
           return;
         } catch (error) {
           if (error?.pauseRequired) {
-            this.pause(error.message || 'The service needs attention before the run can continue.');
+            this.pause(error.message || 'Reddit needs attention before the batch can continue.');
             this.emit('attention-required', { queueItem, error, index, total });
             await this.waitWhilePaused();
             if (this.stopRequested) break;
@@ -557,11 +674,14 @@
             continue;
           }
 
+          await this.waitWhilePaused();
+          if (this.stopRequested) break;
+
           if (error instanceof Core.RateLimitError || error?.code === 'RATE_LIMITED') {
             const delayMs = Math.max(1_000, Number(error.retryAfterMs) || 60_000);
             this.emit('rate-limited', { queueItem, error, delayMs, index, total });
-            await this.waitDelay(delayMs);
-            if (this.stopRequested) break;
+            const shouldContinue = await this.waitDelay(delayMs, 'rate-limit', { index, total });
+            if (!shouldContinue) break;
             attempt -= 1;
             continue;
           }
@@ -569,8 +689,8 @@
           if (error?.retryable && attempt < this.maxRetries) {
             const delayMs = Math.min(60_000, 2_000 * (2 ** attempt));
             this.emit('item-retry', { queueItem, error, delayMs, index, total });
-            await this.waitDelay(delayMs);
-            if (this.stopRequested) break;
+            const shouldContinue = await this.waitDelay(delayMs, 'retry', { index, total });
+            if (!shouldContinue) break;
             continue;
           }
 
@@ -580,58 +700,125 @@
             message: error?.message || String(error)
           };
           queueItem.status = 'failed';
+          queueItem.phase = 'failed';
           queueItem.finishedAt = new Date().toISOString();
+          this.consecutiveFailures += 1;
           this.emit('item-failed', { queueItem, error, index, total });
+
+          if (!this.continueOnFailure) {
+            this.stopRequested = true;
+            this.state = 'stopping';
+            this.emit('failure-stop', { queueItem, error, index, total });
+          } else if (this.consecutiveFailures >= this.maxConsecutiveFailures) {
+            const reason = `Paused after ${this.consecutiveFailures} consecutive failures.`;
+            this.pause(reason);
+            this.emit('failure-guard', { queueItem, error, index, total, reason });
+            await this.waitWhilePaused();
+            if (!this.stopRequested) this.consecutiveFailures = 0;
+          }
           return;
         }
       }
 
-      queueItem.status = 'stopped';
-      queueItem.finishedAt = new Date().toISOString();
+      if (queueItem.status === 'processing') {
+        queueItem.status = 'stopped';
+        queueItem.phase = 'stopped';
+        queueItem.finishedAt = new Date().toISOString();
+      }
+    }
+
+    async withRunLock(operation) {
+      if (this.lockManager?.request) {
+        return this.lockManager.request(
+          this.lockName,
+          { mode: 'exclusive', ifAvailable: true },
+          async (lock) => {
+            if (!lock) throw new Error('Another Reddit Toolbox batch is already active.');
+            return operation();
+          }
+        );
+      }
+
+      const key = '__redditToolboxActiveBatchRunner';
+      if (globalThis[key] && globalThis[key] !== this) {
+        throw new Error('Another Reddit Toolbox batch is already active.');
+      }
+      globalThis[key] = this;
+      try {
+        return await operation();
+      } finally {
+        if (globalThis[key] === this) delete globalThis[key];
+      }
     }
 
     async run(plan) {
-      if (this.state === 'running' || this.state === 'paused') {
-        throw new Error('This runner is already active.');
-      }
-      if (!Core.isPlanCurrent(plan)) throw new Error('The reviewed plan changed. Build a new preview.');
+      if (ACTIVE_STATES.has(this.state)) throw new Error('This batch runner is already active.');
+      return this.withRunLock(() => this.runBatch(plan));
+    }
 
+    async runBatch(plan) {
+      if (!Core.isPlanCurrent(plan)) throw new Error('The reviewed batch changed. Build a new preview.');
+      if (!plan.items.some((item) => item.status === 'ready')) {
+        throw new Error('This batch has no queued items.');
+      }
+
+      this.plan = plan;
       this.state = 'running';
       this.stopRequested = false;
-      this.emit('run-started', { plan });
+      this.pauseReason = '';
+      this.currentIndex = -1;
+      this.consecutiveFailures = 0;
+      plan.status = 'running';
+      plan.startedAt = new Date().toISOString();
+      plan.finishedAt = null;
+      this.emit('batch-started', { plan });
 
       for (let index = 0; index < plan.items.length; index += 1) {
         const queueItem = plan.items[index];
         if (queueItem.status !== 'ready') continue;
+        this.currentIndex = index;
         await this.waitWhilePaused();
         if (this.stopRequested) break;
         await this.process(queueItem, index, plan.items.length);
+        this.emit('batch-progress', { queueItem, index, total: plan.items.length });
         if (this.stopRequested) break;
 
         const hasMore = plan.items.slice(index + 1).some((item) => item.status === 'ready');
         if (hasMore) {
           const delayMs = Core.randomBetween(this.minimumDelayMs, this.maximumDelayMs, this.random);
           this.emit('cooldown', { delayMs, index, total: plan.items.length });
-          await this.waitDelay(delayMs);
+          const shouldContinue = await this.waitDelay(delayMs, 'between-items', {
+            index,
+            total: plan.items.length
+          });
+          if (!shouldContinue) break;
         }
       }
 
+      this.currentIndex = -1;
+      plan.finishedAt = new Date().toISOString();
       if (this.stopRequested) {
         for (const item of plan.items) {
-          if (item.status === 'ready') item.status = 'stopped';
+          if (item.status === 'ready') {
+            item.status = 'stopped';
+            item.phase = 'stopped';
+          }
         }
+        plan.status = 'stopped';
         this.state = 'stopped';
-        this.emit('run-stopped', { plan });
+        this.emit('batch-stopped', { plan });
       } else {
+        plan.status = 'completed';
         this.state = 'completed';
-        this.emit('run-completed', { plan });
+        this.emit('batch-completed', { plan });
       }
       return Core.planSummary(plan);
     }
   }
 
   Core.wait = wait;
-  Core.ControlledRunner = ControlledRunner;
+  Core.BatchRunner = BatchRunner;
+  Core.ControlledRunner = BatchRunner;
 })();
 
 /* src/core/storage.js */
@@ -893,6 +1080,10 @@
     }));
   }
 
+  function sameUsername(left, right) {
+    return String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
+  }
+
   class RedditSessionClient {
     constructor(options = {}) {
       const defaultFetch = globalThis.fetch?.bind(globalThis);
@@ -1033,6 +1224,20 @@
       return { username: this.username, modhash: this.modhash };
     }
 
+    async assertSession(expectedUsername, requireModhash = true) {
+      const session = await this.getSession(requireModhash);
+      if (expectedUsername && !sameUsername(session.username, expectedUsername)) {
+        throw new Core.PauseRequiredError(
+          `The signed-in Reddit account changed from u/${expectedUsername} to u/${session.username}. Switch back before resuming.`,
+          {
+            code: 'ACCOUNT_CHANGED',
+            details: { expectedUsername, actualUsername: session.username }
+          }
+        );
+      }
+      return session;
+    }
+
     async listUserContent(kind, options = {}) {
       if (!this.username) await this.getSession();
       const section = kind === 'comment' ? 'comments' : 'submitted';
@@ -1107,6 +1312,7 @@
   Reddit.retryAfterMilliseconds = retryAfterMilliseconds;
   Reddit.rateLimitFromMessage = rateLimitFromMessage;
   Reddit.apiErrors = apiErrors;
+  Reddit.sameUsername = sameUsername;
   Reddit.RedditSessionClient = RedditSessionClient;
 })();
 
@@ -1207,7 +1413,12 @@
       this.sleep = options.sleep || Core.wait;
       this.random = options.random || Math.random;
       this.randomSource = options.randomSource || globalThis.crypto;
+      this.expectedUsername = String(options.expectedUsername || '').trim();
       this.states = new Map();
+    }
+
+    report(context, phase, detail = {}) {
+      context?.reportPhase?.(phase, detail);
     }
 
     stateFor(fullname) {
@@ -1231,6 +1442,18 @@
         }
       }
       return false;
+    }
+
+    async ensureSession(context) {
+      if (!this.expectedUsername) return;
+      if (typeof this.client.assertSession !== 'function') {
+        throw new Core.PauseRequiredError(
+          'The Reddit adapter cannot revalidate the active account for this automated batch.',
+          { code: 'SESSION_RECHECK_UNAVAILABLE' }
+        );
+      }
+      this.report(context, 'checking-session');
+      await this.client.assertSession(this.expectedUsername, true);
     }
 
     async ensureOwnership(item, state) {
@@ -1271,9 +1494,10 @@
       return error?.code === 'NETWORK_ERROR' || (error?.retryable && Number(error?.status) >= 500);
     }
 
-    async remove(item) {
+    async remove(item, context = {}) {
       const directDelete = item.kind === 'post' && item.editable === false;
       if (directDelete && !this.deleteUneditablePosts) {
+        this.report(context, 'skipped', { reason: 'post-has-no-editable-body' });
         return {
           status: 'skipped',
           reason: 'post-has-no-editable-body',
@@ -1284,7 +1508,9 @@
 
       const state = this.stateFor(item.fullname);
       if (state.deleteSent) {
+        this.report(context, 'verifying-deletion');
         await this.verifyDeleted(item, state);
+        this.report(context, 'complete');
         return {
           status: 'completed',
           reason: directDelete ? 'deleted-uneditable-post' : 'overwritten-and-deleted',
@@ -1294,9 +1520,12 @@
         };
       }
 
+      await this.ensureSession(context);
+      this.report(context, 'checking-ownership');
       await this.ensureOwnership(item, state);
 
       if (directDelete) {
+        this.report(context, 'deleting-direct');
         state.deleteSent = true;
         try {
           await this.client.delete(item.fullname);
@@ -1306,7 +1535,9 @@
             throw error;
           }
         }
+        this.report(context, 'verifying-deletion');
         await this.verifyDeleted(item, state);
+        this.report(context, 'complete');
         return {
           status: 'completed',
           reason: 'deleted-uneditable-post',
@@ -1317,10 +1548,12 @@
       }
 
       if (!state.replacement) {
+        this.report(context, 'preparing-replacement');
         state.replacement = Core.randomLetterString(this.replacementLength, this.randomSource);
       }
 
       if (state.editSent && !state.edited) {
+        this.report(context, 'verifying-overwrite');
         const alreadySaved = await this.verifyWithRetries(
           () => this.client.verifyText(item.fullname, state.replacement)
         );
@@ -1329,6 +1562,7 @@
       }
 
       if (!state.edited) {
+        this.report(context, 'overwriting');
         state.editSent = true;
         try {
           await this.client.edit(item.fullname, state.replacement);
@@ -1338,6 +1572,7 @@
             state.editSent = false;
             throw error;
           }
+          this.report(context, 'verifying-overwrite');
           const saved = await this.verifyWithRetries(
             () => this.client.verifyText(item.fullname, state.replacement)
           );
@@ -1350,9 +1585,11 @@
       }
 
       const settleMs = Core.randomBetween(this.minimumSettleMs, this.maximumSettleMs, this.random);
+      this.report(context, 'waiting-for-save', { delayMs: settleMs });
       await this.sleep(settleMs);
 
       if (this.verifyOverwrite) {
+        this.report(context, 'verifying-overwrite');
         const verified = await this.verifyWithRetries(
           () => this.client.verifyText(item.fullname, state.replacement)
         );
@@ -1364,6 +1601,7 @@
         }
       }
 
+      this.report(context, 'deleting');
       state.deleteSent = true;
       try {
         await this.client.delete(item.fullname);
@@ -1373,7 +1611,9 @@
           throw error;
         }
       }
+      this.report(context, 'verifying-deletion');
       await this.verifyDeleted(item, state);
+      this.report(context, 'complete');
       return {
         status: 'completed',
         reason: 'overwritten-and-deleted',
@@ -1401,6 +1641,7 @@
       --rt-text: #1c1c1c;
       --rt-muted: #576f76;
       --rt-danger: #b42318;
+      --rt-warning: #b54708;
       --rt-success: #067647;
       color: var(--rt-text);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -1416,24 +1657,54 @@
     .launcher {
       align-items: center;
       background: var(--rt-accent);
-      border: 0;
+      border: 3px solid transparent;
       border-radius: 999px;
       bottom: 20px;
       box-shadow: 0 8px 24px rgba(0, 0, 0, .22);
       color: white;
       display: flex;
       font-size: 13px;
-      font-weight: 750;
+      font-weight: 800;
       height: 48px;
       justify-content: center;
-      letter-spacing: .02em;
+      letter-spacing: .01em;
+      padding: 0;
       position: fixed;
       right: 20px;
+      transition: background-color .18s ease, border-color .18s ease, color .18s ease, transform .18s ease;
       width: 48px;
       z-index: 2147483646;
     }
 
-    .launcher:hover { background: var(--rt-accent-hover); }
+    .launcher:hover { background: var(--rt-accent-hover); transform: translateY(-1px); }
+    .launcher.running { animation: rt-pulse 1.8s ease-in-out infinite; background: var(--rt-bg); border-color: var(--rt-accent); color: var(--rt-accent); font-size: 11px; }
+    .launcher.running:hover { background: var(--rt-bg-subtle); }
+    .launcher.paused { background: var(--rt-warning); }
+    .launcher.paused:hover { background: var(--rt-warning); }
+    .launcher.stopping { background: var(--rt-muted); }
+    .launcher.stopping:hover { background: var(--rt-muted); }
+    .launcher.completed { background: var(--rt-success); }
+    .launcher.completed:hover { background: var(--rt-success); }
+    .launcher.failed { background: var(--rt-danger); }
+    .launcher.failed:hover { background: var(--rt-danger); }
+    .launcher-label { pointer-events: none; }
+    .launcher-badge {
+      align-items: center;
+      background: var(--rt-danger);
+      border: 2px solid var(--rt-bg);
+      border-radius: 999px;
+      color: white;
+      display: flex;
+      font-size: 9px;
+      font-weight: 800;
+      height: 20px;
+      justify-content: center;
+      min-width: 20px;
+      padding: 0 4px;
+      position: absolute;
+      right: -6px;
+      top: -6px;
+    }
 
     .panel {
       background: var(--rt-bg);
@@ -1442,11 +1713,11 @@
       bottom: 80px;
       box-shadow: 0 18px 60px rgba(0, 0, 0, .28);
       display: none;
-      max-height: min(820px, calc(100vh - 110px));
+      max-height: min(860px, calc(100vh - 110px));
       overflow: hidden;
       position: fixed;
       right: 20px;
-      width: min(470px, calc(100vw - 24px));
+      width: min(490px, calc(100vw - 24px));
       z-index: 2147483647;
     }
 
@@ -1481,9 +1752,9 @@
     .content { overflow: auto; padding: 16px; }
     .section { display: grid; gap: 12px; margin-bottom: 20px; }
     .section:last-child { margin-bottom: 0; }
-    .section-title { align-items: baseline; display: flex; justify-content: space-between; }
+    .section-title { align-items: baseline; display: flex; gap: 12px; justify-content: space-between; }
     .section-title h2 { font-size: 14px; margin: 0; }
-    .section-title span { color: var(--rt-muted); font-size: 12px; }
+    .section-title span { color: var(--rt-muted); font-size: 12px; text-align: right; }
 
     .notice {
       background: #fff4ed;
@@ -1494,7 +1765,17 @@
       padding: 10px 12px;
     }
 
+    .automation-note {
+      background: var(--rt-bg-subtle);
+      border: 1px solid var(--rt-border);
+      border-radius: 10px;
+      color: var(--rt-muted);
+      font-size: 12px;
+      padding: 10px 12px;
+    }
+
     .grid { display: grid; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .compact-grid { gap: 6px; }
     .field { display: grid; gap: 5px; }
     .field.full { grid-column: 1 / -1; }
     .field label, .label { color: var(--rt-muted); font-size: 12px; font-weight: 650; }
@@ -1540,9 +1821,9 @@
     .status-line.error { color: var(--rt-danger); }
     .status-line.success { color: var(--rt-success); }
 
-    .summary { display: grid; gap: 8px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
-    .metric { background: var(--rt-bg-subtle); border-radius: 9px; padding: 9px; }
-    .metric strong { display: block; font-size: 16px; }
+    .summary, .batch-summary { display: grid; gap: 8px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .metric { background: var(--rt-bg-subtle); border-radius: 9px; min-width: 0; padding: 9px; }
+    .metric strong { display: block; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .metric span { color: var(--rt-muted); font-size: 11px; }
 
     .preview {
@@ -1561,18 +1842,34 @@
     .date { color: var(--rt-muted); font-size: 11px; margin-left: auto; }
     .snippet { color: var(--rt-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .item-status { color: var(--rt-muted); font-size: 11px; }
+    .item-status.processing { color: var(--rt-accent); }
     .item-status.completed { color: var(--rt-success); }
     .item-status.failed { color: var(--rt-danger); }
+    .item-status.stopped { color: var(--rt-warning); }
 
     .confirm { background: var(--rt-bg-subtle); border-radius: 10px; display: grid; gap: 8px; padding: 12px; }
     .confirm code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 750; }
-    .progress { appearance: none; background: var(--rt-bg-subtle); border: 0; border-radius: 999px; height: 7px; overflow: hidden; width: 100%; }
+    .current-action {
+      background: var(--rt-bg-subtle);
+      border-left: 3px solid var(--rt-accent);
+      border-radius: 8px;
+      color: var(--rt-text);
+      font-size: 12px;
+      min-height: 38px;
+      padding: 10px 11px;
+    }
+    .progress { appearance: none; background: var(--rt-bg-subtle); border: 0; border-radius: 999px; height: 8px; overflow: hidden; width: 100%; }
     .progress::-webkit-progress-bar { background: var(--rt-bg-subtle); }
-    .progress::-webkit-progress-value { background: var(--rt-accent); }
+    .progress::-webkit-progress-value { background: var(--rt-accent); transition: width .2s ease; }
     .progress::-moz-progress-bar { background: var(--rt-accent); }
 
-    .log { background: var(--rt-bg-subtle); border-radius: 9px; color: var(--rt-muted); font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 120px; overflow: auto; padding: 9px; white-space: pre-wrap; }
+    .log { background: var(--rt-bg-subtle); border-radius: 9px; color: var(--rt-muted); font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 150px; overflow: auto; padding: 9px; white-space: pre-wrap; }
     .hidden { display: none !important; }
+
+    @keyframes rt-pulse {
+      0%, 100% { box-shadow: 0 8px 24px rgba(0, 0, 0, .22); }
+      50% { box-shadow: 0 8px 26px color-mix(in srgb, var(--rt-accent) 38%, transparent); }
+    }
 
     @media (prefers-color-scheme: dark) {
       :host {
@@ -1582,6 +1879,7 @@
         --rt-text: #f2f4f5;
         --rt-muted: #a8b3b8;
         --rt-danger: #f04438;
+        --rt-warning: #f79009;
         --rt-success: #32d583;
       }
       .notice { background: #3a2219; border-color: #713b21; color: #ffd6ae; }
@@ -1591,12 +1889,14 @@
       .panel { bottom: 72px; right: 12px; }
       .launcher { bottom: 14px; right: 14px; }
       .grid { grid-template-columns: 1fr; }
+      .compact-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .field.full { grid-column: auto; }
-      .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .summary, .batch-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .run-actions .button { flex: 1 1 calc(50% - 8px); }
     }
 
     @media (prefers-reduced-motion: reduce) {
-      * { scroll-behavior: auto !important; }
+      * { animation: none !important; scroll-behavior: auto !important; transition: none !important; }
     }
   `;
 })();
@@ -1622,16 +1922,21 @@
     verifyOverwrite: true,
     replacementLength: 24,
     minimumDelaySeconds: 4.5,
-    maximumDelaySeconds: 8.5
+    maximumDelaySeconds: 8.5,
+    continueOnFailure: true,
+    maxConsecutiveFailures: 5
   });
 
   const staticMarkup = String.raw`
-    <button class="launcher" type="button" title="Open Reddit Toolbox" aria-label="Open Reddit Toolbox">RT</button>
+    <button class="launcher" type="button" title="Open Reddit Toolbox" aria-label="Open Reddit Toolbox">
+      <span class="launcher-label">RT</span>
+      <span class="launcher-badge" hidden></span>
+    </button>
     <aside class="panel" role="dialog" aria-label="Reddit Toolbox" aria-modal="false">
       <header class="header">
         <div class="brand">
           <strong>Reddit Toolbox</strong>
-          <span>Local cleanup · RC1</span>
+          <span>Automated history cleanup · RC2</span>
         </div>
         <button class="icon-button close" type="button" aria-label="Close">✕</button>
       </header>
@@ -1639,7 +1944,7 @@
       <div class="content">
         <section class="section">
           <div class="notice">
-            Deletion is permanent. Review the preview first. The tool edits eligible text to random letters, verifies the change, then deletes it one item at a time.
+            One confirmation starts the entire selected batch. No per-item clicks are required. Keep this Reddit tab open; the batch continues while this panel is closed and pauses only when Reddit needs attention or you press Pause or Stop.
           </div>
         </section>
 
@@ -1706,31 +2011,35 @@
             </div>
             <div class="field">
               <label for="minimum-delay">Delay range (seconds)</label>
-              <div class="grid">
+              <div class="grid compact-grid">
                 <input id="minimum-delay" type="number" min="1" max="300" step="0.5" aria-label="Minimum delay seconds">
                 <input id="maximum-delay" type="number" min="1" max="300" step="0.5" aria-label="Maximum delay seconds">
               </div>
             </div>
           </div>
 
+          <div class="automation-note">
+            Reddit Toolbox automatically waits through rate limits, retries temporary failures, and continues past isolated item failures. Five consecutive failures pause the batch for review.
+          </div>
+
           <div class="actions">
-            <button class="button primary scan" type="button">Scan profile</button>
+            <button class="button primary scan" type="button">Scan history</button>
             <button class="button import" type="button">Import archive CSV</button>
             <input class="file-input archive-input" type="file" accept=".csv,text/csv" multiple>
-            <button class="button build-preview" type="button">Build preview</button>
+            <button class="button build-preview" type="button">Prepare batch</button>
           </div>
           <div class="status-line scan-status" role="status">For complete history, extract comments.csv and posts.csv from a Reddit data export.</div>
         </section>
 
         <section class="section preview-section">
-          <div class="section-title"><h2>2. Review</h2><span class="preview-caption">No plan built</span></div>
+          <div class="section-title"><h2>2. Review batch</h2><span class="preview-caption">No batch prepared</span></div>
           <div class="summary">
             <div class="metric"><strong class="found-count">0</strong><span>Found</span></div>
             <div class="metric"><strong class="selected-count">0</strong><span>Selected</span></div>
             <div class="metric"><strong class="comment-count">0</strong><span>Comments</span></div>
             <div class="metric"><strong class="post-count">0</strong><span>Posts</span></div>
           </div>
-          <div class="preview"><div class="preview-empty">Scan or import data, then build a preview.</div></div>
+          <div class="preview"><div class="preview-empty">Scan or import data, then prepare a batch.</div></div>
           <div class="actions">
             <button class="button export-backup" type="button" disabled>Export selected content</button>
             <button class="button export-log" type="button" disabled>Export run log</button>
@@ -1738,17 +2047,25 @@
         </section>
 
         <section class="section run-section">
-          <div class="section-title"><h2>3. Run</h2><span>Explicit confirmation required</span></div>
+          <div class="section-title"><h2>3. Automate</h2><span>One confirmation for the whole batch</span></div>
           <div class="confirm">
-            <span>Type <code class="confirmation-phrase">DELETE 0 ITEMS</code> to unlock the run.</span>
+            <span>Type <code class="confirmation-phrase">DELETE 0 ITEMS</code> once to unlock the complete batch.</span>
             <input class="confirmation-input" type="text" autocomplete="off" spellcheck="false" aria-label="Deletion confirmation">
           </div>
+          <div class="batch-summary" aria-live="polite">
+            <div class="metric"><strong class="processed-count">0</strong><span>Processed</span></div>
+            <div class="metric"><strong class="remaining-count">0</strong><span>Remaining</span></div>
+            <div class="metric"><strong class="failed-count">0</strong><span>Failed</span></div>
+            <div class="metric"><strong class="current-count">—</strong><span>Current</span></div>
+          </div>
+          <div class="current-action">Ready to run the selected batch automatically.</div>
           <progress class="progress" value="0" max="1"></progress>
           <div class="status-line run-status" role="status">Idle</div>
-          <div class="actions">
-            <button class="button danger start" type="button" disabled>Start cleanup</button>
-            <button class="button pause" type="button" disabled>Pause</button>
-            <button class="button stop" type="button" disabled>Stop</button>
+          <div class="actions run-actions">
+            <button class="button danger start" type="button" disabled>Run entire batch</button>
+            <button class="button pause" type="button" disabled>Pause batch</button>
+            <button class="button stop" type="button" disabled>Stop after current item</button>
+            <button class="button retry" type="button" disabled>Prepare retry batch</button>
           </div>
           <div class="log">No run activity.</div>
         </section>
@@ -1796,9 +2113,18 @@
       this.archiveItems = [];
       this.plan = null;
       this.runner = null;
+      this.removalService = null;
+      this.removalServiceClient = null;
       this.username = '';
       this.logLines = [];
       this.busy = false;
+      this.completionResetTimer = null;
+      this.beforeUnloadHandler = (event) => {
+        const state = this.runner?.state;
+        if (!['running', 'waiting', 'paused', 'stopping'].includes(state)) return;
+        event.preventDefault();
+        event.returnValue = '';
+      };
       this.settings = { ...UI.DEFAULT_SETTINGS, ...(this.store.get('settings', {}) || {}) };
     }
 
@@ -1819,13 +2145,16 @@
       this.bindEvents();
       this.updateDateFields();
       this.refreshControls();
+      this.setLauncherState('idle');
+      globalThis.addEventListener?.('beforeunload', this.beforeUnloadHandler);
       return this;
     }
 
     captureRefs() {
       const $ = (selector) => this.shadow.querySelector(selector);
       this.refs = {
-        launcher: $('.launcher'), panel: $('.panel'), close: $('.close'),
+        launcher: $('.launcher'), launcherLabel: $('.launcher-label'), launcherBadge: $('.launcher-badge'),
+        panel: $('.panel'), close: $('.close'),
         includeComments: $('#include-comments'), includePosts: $('#include-posts'),
         dateMode: $('#date-mode'), fromDate: $('#from-date'), throughDate: $('#through-date'),
         fromField: $('.from-field'), throughField: $('.through-field'), maxItems: $('#max-items'),
@@ -1840,8 +2169,10 @@
         previewCaption: $('.preview-caption'), preview: $('.preview'),
         exportBackup: $('.export-backup'), exportLog: $('.export-log'),
         confirmationPhrase: $('.confirmation-phrase'), confirmationInput: $('.confirmation-input'),
-        progress: $('.progress'), runStatus: $('.run-status'), start: $('.start'),
-        pause: $('.pause'), stop: $('.stop'), log: $('.log')
+        processedCount: $('.processed-count'), remainingCount: $('.remaining-count'),
+        failedCount: $('.failed-count'), currentCount: $('.current-count'),
+        currentAction: $('.current-action'), progress: $('.progress'), runStatus: $('.run-status'),
+        start: $('.start'), pause: $('.pause'), stop: $('.stop'), retry: $('.retry'), log: $('.log')
       };
     }
 
@@ -1862,13 +2193,14 @@
       this.refs.start.addEventListener('click', () => this.startRun());
       this.refs.pause.addEventListener('click', () => this.togglePause());
       this.refs.stop.addEventListener('click', () => this.stopRun());
+      this.refs.retry.addEventListener('click', () => this.prepareRetryBatch());
 
       for (const input of this.shadow.querySelectorAll('input, select')) {
         if (input === this.refs.archiveInput || input === this.refs.confirmationInput) continue;
         input.addEventListener('change', () => {
           this.settings = this.readSettingsFromForm();
           this.store.set('settings', this.settings);
-          if (this.plan) this.invalidatePlan('Settings changed. Build the preview again.');
+          if (this.plan) this.invalidatePlan('Settings changed. Prepare the batch again.');
         });
       }
     }
@@ -1926,7 +2258,9 @@
         verifyOverwrite: true,
         replacementLength: Math.max(8, Math.min(128, Number(this.refs.replacementLength.value) || 24)),
         minimumDelaySeconds,
-        maximumDelaySeconds
+        maximumDelaySeconds,
+        continueOnFailure: true,
+        maxConsecutiveFailures: 5
       };
     }
 
@@ -2039,13 +2373,15 @@
           ...this.settings,
           keepSubreddits: this.settings.keepSubreddits
         });
+        this.removalService = null;
+        this.removalServiceClient = null;
         this.plan = Core.createPlan(selection.selected, this.settings);
         this.plan.selectionSkipped = selection.skipped;
         this.refs.confirmationInput.value = '';
         this.renderPlan();
         this.setStatus(
           this.refs.scanStatus,
-          `${selection.selected.length} selected; ${Object.values(selection.skipped).reduce((sum, count) => sum + count, 0)} excluded by filters.`,
+          `${selection.selected.length} queued for one automated batch; ${Object.values(selection.skipped).reduce((sum, count) => sum + count, 0)} excluded by filters.`,
           'success'
         );
       } catch (error) {
@@ -2055,16 +2391,27 @@
 
     invalidatePlan(message = '') {
       this.plan = null;
+      this.removalService = null;
+      this.removalServiceClient = null;
       this.refs.confirmationInput.value = '';
       this.refs.confirmationPhrase.textContent = 'DELETE 0 ITEMS';
       this.refs.selectedCount.textContent = '0';
       this.refs.commentCount.textContent = '0';
       this.refs.postCount.textContent = '0';
-      this.refs.previewCaption.textContent = 'No plan built';
+      this.refs.processedCount.textContent = '0';
+      this.refs.remainingCount.textContent = '0';
+      this.refs.failedCount.textContent = '0';
+      this.refs.currentCount.textContent = '—';
+      this.refs.previewCaption.textContent = 'No batch prepared';
+      this.refs.currentAction.textContent = 'Ready to run the selected batch automatically.';
+      this.refs.progress.max = 1;
+      this.refs.progress.value = 0;
+      this.refs.retry.disabled = true;
       this.refs.preview.replaceChildren(Object.assign(document.createElement('div'), {
         className: 'preview-empty',
-        textContent: 'Build a preview before starting a cleanup.'
+        textContent: 'Prepare a batch before starting cleanup.'
       }));
+      this.setLauncherState('idle');
       if (message) this.setStatus(this.refs.scanStatus, message);
       this.refreshControls();
     }
@@ -2079,9 +2426,17 @@
       this.refs.selectedCount.textContent = String(contents.length);
       this.refs.commentCount.textContent = String(contents.filter((item) => item.kind === 'comment').length);
       this.refs.postCount.textContent = String(contents.filter((item) => item.kind === 'post').length);
-      this.refs.previewCaption.textContent = `Plan ${this.plan.digest}`;
+      this.refs.previewCaption.textContent = `Automated batch ${this.plan.digest}`;
       this.refs.confirmationPhrase.textContent = this.plan.confirmation;
       this.refs.preview.replaceChildren();
+      this.refs.processedCount.textContent = '0';
+      this.refs.remainingCount.textContent = String(contents.length);
+      this.refs.failedCount.textContent = '0';
+      this.refs.currentCount.textContent = '—';
+      this.refs.currentAction.textContent = 'Ready to run the selected batch automatically.';
+      this.setStatus(this.refs.runStatus, contents.length
+        ? `Ready · one confirmation will process all ${contents.length} selected items.`
+        : 'No matching items.');
 
       if (!contents.length) {
         this.refs.preview.append(Object.assign(document.createElement('div'), {
@@ -2114,21 +2469,23 @@
           const status = document.createElement('div');
           status.className = `item-status ${queueItem.status}`;
           status.textContent = item.kind === 'post' && !item.editable
-            ? 'Link/media post · direct delete only'
-            : 'Ready · overwrite then delete';
+            ? 'Queued · direct delete (explicitly enabled)'
+            : 'Queued · automatic overwrite, verification, and deletion';
           row.append(head, snippet, status);
           this.refs.preview.append(row);
         }
         if (contents.length > 100) {
           this.refs.preview.append(Object.assign(document.createElement('div'), {
             className: 'preview-empty',
-            textContent: `${contents.length - 100} more items are included in this plan.`
+            textContent: `${contents.length - 100} more items are included in this batch.`
           }));
         }
       }
       this.refs.progress.max = Math.max(1, contents.length);
       this.refs.progress.value = 0;
       this.refs.exportBackup.disabled = contents.length === 0;
+      this.refs.retry.disabled = true;
+      this.setLauncherState('idle');
       this.refreshControls();
     }
   }
@@ -2148,21 +2505,50 @@
   'use strict';
 
   const { Core, Reddit, UI } = globalThis.RedditToolbox;
+  const ACTIVE_STATES = new Set(['running', 'waiting', 'paused', 'stopping']);
+
+  const PHASE_LABELS = Object.freeze({
+    starting: 'Starting item',
+    'checking-session': 'Rechecking the signed-in account',
+    'checking-ownership': 'Checking ownership',
+    'preparing-replacement': 'Generating random replacement text',
+    overwriting: 'Overwriting the original text',
+    'waiting-for-save': 'Waiting for Reddit to save the overwrite',
+    'verifying-overwrite': 'Verifying the saved replacement',
+    deleting: 'Deleting the item',
+    'deleting-direct': 'Deleting a non-editable post',
+    'verifying-deletion': 'Confirming deletion',
+    complete: 'Item complete',
+    completed: 'Item complete',
+    skipped: 'Item skipped',
+    failed: 'Item failed',
+    stopped: 'Item stopped'
+  });
+
+  function batchPhaseLabel(phase) {
+    return PHASE_LABELS[phase] || 'Processing item';
+  }
+
+  function secondsLabel(milliseconds) {
+    return `${Math.max(1, Math.ceil(Number(milliseconds || 0) / 1_000))}s`;
+  }
 
   class RunMethods {
     refreshControls() {
-      const active = this.runner && ['running', 'paused'].includes(this.runner.state);
+      const active = Boolean(this.runner && ACTIVE_STATES.has(this.runner.state));
       const locked = Boolean(active || this.busy);
+      const summary = this.plan ? Core.planSummary(this.plan) : Core.planSummary(null);
       const confirmed = Boolean(
         this.plan
-        && this.plan.items.length
+        && summary.ready > 0
         && Core.isPlanCurrent(this.plan)
         && this.refs.confirmationInput.value.trim() === this.plan.confirmation
       );
-      this.refs.start.disabled = active || !confirmed;
-      this.refs.pause.disabled = !active;
-      this.refs.stop.disabled = !active;
-      this.refs.pause.textContent = this.runner?.state === 'paused' ? 'Resume' : 'Pause';
+      this.refs.start.disabled = locked || !confirmed;
+      this.refs.pause.disabled = !active || this.runner?.state === 'stopping';
+      this.refs.stop.disabled = !active || this.runner?.state === 'stopping';
+      this.refs.retry.disabled = locked || !(summary.failed || summary.stopped);
+      this.refs.pause.textContent = this.runner?.state === 'paused' ? 'Resume batch' : 'Pause batch';
       this.refs.exportLog.disabled = !this.plan || !this.plan.items.some((item) => item.status !== 'ready');
 
       for (const element of this.shadow.querySelectorAll('.scope-section input, .scope-section select, .scope-section button')) {
@@ -2170,10 +2556,59 @@
       }
     }
 
+    setLauncherState(state = 'idle', summary = null) {
+      if (!this.refs.launcher) return;
+      if (this.completionResetTimer) {
+        clearTimeout(this.completionResetTimer);
+        this.completionResetTimer = null;
+      }
+      const current = summary || (this.plan ? Core.planSummary(this.plan) : Core.planSummary(null));
+      this.refs.launcher.classList.remove('running', 'paused', 'stopping', 'completed', 'failed');
+      this.refs.launcherBadge.hidden = true;
+      this.refs.launcherBadge.textContent = '';
+
+      if (['running', 'waiting'].includes(state)) {
+        this.refs.launcher.classList.add('running');
+        this.refs.launcherLabel.textContent = `${current.percent}%`;
+        this.refs.launcherBadge.hidden = current.remaining === 0;
+        this.refs.launcherBadge.textContent = String(current.remaining);
+        this.refs.launcher.title = `${current.processed}/${current.total} processed`;
+        return;
+      }
+      if (state === 'paused') {
+        this.refs.launcher.classList.add('paused');
+        this.refs.launcherLabel.textContent = '!';
+        this.refs.launcherBadge.hidden = current.remaining === 0;
+        this.refs.launcherBadge.textContent = String(current.remaining);
+        this.refs.launcher.title = 'Reddit Toolbox needs attention';
+        return;
+      }
+      if (state === 'stopping' || state === 'stopped') {
+        this.refs.launcher.classList.add('stopping');
+        this.refs.launcherLabel.textContent = '■';
+        this.refs.launcherBadge.hidden = current.remaining === 0;
+        this.refs.launcherBadge.textContent = String(current.remaining);
+        this.refs.launcher.title = 'Batch stopped';
+        return;
+      }
+      if (state === 'completed') {
+        this.refs.launcher.classList.add(current.failed ? 'failed' : 'completed');
+        this.refs.launcherLabel.textContent = current.failed ? '!' : '✓';
+        this.refs.launcher.title = current.failed ? 'Batch completed with failures' : 'Batch completed';
+        this.completionResetTimer = setTimeout(() => {
+          if (!this.runner || !ACTIVE_STATES.has(this.runner.state)) this.setLauncherState('idle');
+        }, 5_000);
+        return;
+      }
+
+      this.refs.launcherLabel.textContent = 'RT';
+      this.refs.launcher.title = 'Open Reddit Toolbox';
+    }
+
     log(message) {
       const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
       this.logLines.push(`${time}  ${message}`);
-      this.logLines = this.logLines.slice(-120);
+      this.logLines = this.logLines.slice(-160);
       this.refs.log.textContent = this.logLines.join('\n');
       this.refs.log.scrollTop = this.refs.log.scrollHeight;
     }
@@ -2184,76 +2619,175 @@
       const status = row?.querySelector('.item-status');
       if (!status) return;
       status.className = `item-status ${queueItem.status}`;
-      const detail = queueItem.error?.message || queueItem.outcome?.reason || queueItem.status;
+      const detail = queueItem.error?.message
+        || queueItem.outcome?.reason
+        || batchPhaseLabel(queueItem.phase);
       status.textContent = `${queueItem.status} · ${detail}`;
     }
 
+    updateBatchMetrics(event) {
+      const summary = event.summary || (this.plan ? Core.planSummary(this.plan) : Core.planSummary(null));
+      this.refs.progress.max = Math.max(1, summary.total);
+      this.refs.progress.value = summary.processed;
+      this.refs.processedCount.textContent = String(summary.processed);
+      this.refs.remainingCount.textContent = String(summary.remaining);
+      this.refs.failedCount.textContent = String(summary.failed);
+      this.refs.currentCount.textContent = event.currentNumber ? `${event.currentNumber}/${summary.total}` : '—';
+      return summary;
+    }
+
     handleRunnerEvent(event) {
-      const summary = this.plan ? Core.planSummary(this.plan) : { total: 0, completed: 0, skipped: 0, failed: 0 };
-      const finished = summary.completed + summary.skipped + summary.failed + summary.stopped;
-      this.refs.progress.value = Math.min(summary.total, finished);
+      const summary = this.updateBatchMetrics(event);
       if (event.queueItem) this.updateQueueRow(event.queueItem);
 
       switch (event.type) {
-        case 'run-started': this.log(`Run started with ${event.plan.items.length} items.`); break;
-        case 'item-started': this.log(`Processing ${event.queueItem.content.fullname}.`); break;
-        case 'item-finished': this.log(`${event.queueItem.content.fullname}: ${event.queueItem.outcome.reason}.`); break;
-        case 'item-failed': this.log(`${event.queueItem.content.fullname}: failed — ${UI.compactError(event.error)}.`); break;
-        case 'item-retry': this.log(`${event.queueItem.content.fullname}: retrying after ${Math.ceil(event.delayMs / 1000)}s.`); break;
-        case 'rate-limited': this.log(`Reddit rate limit: waiting ${Math.ceil(event.delayMs / 1000)}s.`); break;
-        case 'attention-required': this.log(`Paused: ${UI.compactError(event.error)}`); break;
-        case 'paused': this.log(event.reason); break;
-        case 'resumed': this.log('Run resumed.'); break;
-        case 'stop-requested': this.log('Stop requested; the current request will finish first.'); break;
-        case 'run-stopped': this.log('Run stopped.'); break;
-        case 'run-completed': this.log('Run completed.'); break;
-        default: break;
+        case 'batch-started':
+          this.log(`Automated batch started with ${event.plan.items.length} items. No further confirmation is needed.`);
+          this.refs.currentAction.textContent = 'Starting the automated batch…';
+          break;
+        case 'item-started':
+          this.log(`Item ${event.index + 1}/${event.total} started: ${event.queueItem.content.fullname}.`);
+          this.refs.currentAction.textContent = `Item ${event.index + 1}/${event.total} · starting`;
+          break;
+        case 'item-phase':
+          this.refs.currentAction.textContent = `Item ${event.index + 1}/${event.total} · ${batchPhaseLabel(event.phase)}`;
+          break;
+        case 'item-finished':
+          this.log(`Item ${event.index + 1}/${event.total}: ${event.queueItem.outcome.reason}.`);
+          break;
+        case 'item-failed':
+          this.log(`Item ${event.index + 1}/${event.total}: failed — ${UI.compactError(event.error)}.`);
+          break;
+        case 'item-retry':
+          this.log(`Item ${event.index + 1}/${event.total}: retrying automatically in ${secondsLabel(event.delayMs)}.`);
+          break;
+        case 'rate-limited':
+          this.log(`Reddit rate limit: the batch will continue automatically in ${secondsLabel(event.delayMs)}.`);
+          break;
+        case 'cooldown':
+          this.refs.currentAction.textContent = `Pacing requests · next item in ${secondsLabel(event.delayMs)}`;
+          break;
+        case 'wait-started':
+        case 'wait-tick': {
+          const prefix = event.waitReason === 'rate-limit'
+            ? 'Rate limited · continuing automatically in'
+            : event.waitReason === 'retry'
+              ? 'Retrying automatically in'
+              : 'Pacing requests · next item in';
+          this.refs.currentAction.textContent = `${prefix} ${secondsLabel(event.remainingMs)}`;
+          break;
+        }
+        case 'wait-finished':
+          this.refs.currentAction.textContent = 'Continuing the automated batch…';
+          break;
+        case 'attention-required':
+          this.open();
+          this.log(`Batch paused: ${UI.compactError(event.error)}`);
+          this.refs.currentAction.textContent = `Attention required · ${UI.compactError(event.error)}`;
+          break;
+        case 'batch-paused':
+          this.log(event.reason);
+          this.refs.currentAction.textContent = event.reason;
+          break;
+        case 'batch-resumed':
+          this.log('Automated batch resumed.');
+          this.refs.currentAction.textContent = 'Continuing the automated batch…';
+          break;
+        case 'failure-guard':
+          this.open();
+          this.log(event.reason);
+          break;
+        case 'stop-requested':
+          this.log('Stop requested; the current item will finish, then the batch will stop.');
+          this.refs.currentAction.textContent = 'Stopping after the current item…';
+          break;
+        case 'batch-stopped':
+          this.log('Batch stopped. Remaining items can be prepared as one retry batch.');
+          this.refs.currentAction.textContent = 'Batch stopped · prepare a retry batch for remaining items.';
+          break;
+        case 'batch-completed':
+          this.log('Automated batch completed.');
+          this.refs.currentAction.textContent = summary.failed
+            ? 'Batch complete with failed items available for retry.'
+            : 'Batch complete.';
+          break;
+        default:
+          break;
       }
 
-      this.setStatus(
-        this.refs.runStatus,
-        `${finished}/${summary.total} finished · ${summary.completed} deleted · ${summary.skipped} skipped · ${summary.failed} failed`
-      );
+      const status = event.state === 'paused'
+        ? `Paused · ${summary.processed}/${summary.total} processed · ${summary.remaining} remaining`
+        : event.state === 'stopping'
+          ? `Stopping · ${summary.processed}/${summary.total} processed · ${summary.remaining} remaining`
+          : `${summary.processed}/${summary.total} processed · ${summary.completed} deleted · ${summary.skipped} skipped · ${summary.failed} failed`;
+      this.setStatus(this.refs.runStatus, status, summary.failed ? 'error' : '');
+      this.setLauncherState(event.state, summary);
       this.refreshControls();
     }
 
     async startRun() {
+      if (this.busy || (this.runner && ACTIVE_STATES.has(this.runner.state))) return;
       if (!this.plan || !Core.isPlanCurrent(this.plan)) {
-        this.setStatus(this.refs.runStatus, 'The plan changed. Build a new preview.', 'error');
+        this.setStatus(this.refs.runStatus, 'The batch changed. Prepare a new preview.', 'error');
+        return;
+      }
+      const before = Core.planSummary(this.plan);
+      if (!before.ready) {
+        this.setStatus(this.refs.runStatus, 'This batch has no queued items.', 'error');
         return;
       }
       if (this.refs.confirmationInput.value.trim() !== this.plan.confirmation) return;
 
       this.settings = this.readSettingsFromForm();
       this.busy = true;
+      this.refreshControls();
       this.logLines = [];
       this.refs.log.textContent = '';
       this.refs.confirmationInput.value = '';
+      this.setStatus(this.refs.runStatus, 'Verifying the Reddit session before starting…');
       try {
         const client = this.ensureClient();
         const session = await client.getSession(true);
         this.username = session.username;
-        const service = new Reddit.RedditRemovalService(client, {
-          ...this.plan.options,
-          randomSource: globalThis.crypto
-        });
-        this.runner = new Core.ControlledRunner((item) => service.remove(item), {
+        const reuseService = Boolean(
+          this.plan.retryOf
+          && this.removalService
+          && this.removalServiceClient === client
+        );
+        const service = reuseService
+          ? this.removalService
+          : new Reddit.RedditRemovalService(client, {
+            ...this.plan.options,
+            expectedUsername: session.username,
+            randomSource: globalThis.crypto
+          });
+        this.removalService = service;
+        this.removalServiceClient = client;
+        this.runner = new Core.BatchRunner((item, context) => service.remove(item, context), {
           minimumDelayMs: this.settings.minimumDelaySeconds * 1_000,
           maximumDelayMs: this.settings.maximumDelaySeconds * 1_000,
           maxRetries: 2,
+          continueOnFailure: this.plan.options.continueOnFailure,
+          maxConsecutiveFailures: this.plan.options.maxConsecutiveFailures,
           onEvent: (event) => this.handleRunnerEvent(event)
         });
         this.refreshControls();
         await this.runner.run(this.plan);
         const summary = Core.planSummary(this.plan);
+        const message = summary.stopped
+          ? `${summary.completed} deleted; ${summary.stopped} remaining items stopped.`
+          : summary.failed
+            ? `${summary.completed} deleted; ${summary.failed} failed items can be retried as one batch.`
+            : `${summary.completed} deleted, ${summary.skipped} skipped. Automated batch complete.`;
         this.setStatus(
           this.refs.runStatus,
-          `${summary.completed} deleted, ${summary.skipped} skipped, ${summary.failed} failed.`,
-          summary.failed ? 'error' : 'success'
+          message,
+          summary.failed || summary.stopped ? 'error' : 'success'
         );
       } catch (error) {
         this.setStatus(this.refs.runStatus, UI.compactError(error), 'error');
-        this.log(`Run could not start: ${UI.compactError(error)}`);
+        this.log(`Batch could not start: ${UI.compactError(error)}`);
+        this.setLauncherState('paused', this.plan ? Core.planSummary(this.plan) : null);
       } finally {
         this.busy = false;
         this.refreshControls();
@@ -2282,6 +2816,23 @@
       this.refreshControls();
     }
 
+    prepareRetryBatch() {
+      if (this.busy || !this.plan || (this.runner && ACTIVE_STATES.has(this.runner.state))) return;
+      const retry = Core.createRetryPlan(this.plan);
+      if (!retry) {
+        this.setStatus(this.refs.runStatus, 'There are no failed or stopped items to retry.');
+        return;
+      }
+      this.plan = retry;
+      this.refs.confirmationInput.value = '';
+      this.renderPlan();
+      this.setStatus(
+        this.refs.runStatus,
+        `Retry batch prepared with ${retry.items.length} items. Review once, confirm once, then run the full batch.`
+      );
+      this.open();
+    }
+
     exportBackup() {
       if (!this.plan) return;
       const payload = {
@@ -2289,6 +2840,7 @@
         username: this.username || null,
         planId: this.plan.id,
         planDigest: this.plan.digest,
+        mode: this.plan.mode,
         items: this.plan.items.map(({ content }) => content)
       };
       Core.downloadText(
@@ -2304,6 +2856,8 @@
         username: this.username || null,
         planId: this.plan.id,
         planDigest: this.plan.digest,
+        mode: this.plan.mode,
+        retryOf: this.plan.retryOf,
         summary: Core.planSummary(this.plan),
         items: this.plan.items.map((item) => ({
           fullname: item.content.fullname,
@@ -2312,6 +2866,7 @@
           permalink: item.content.permalink,
           createdAt: new Date(item.content.createdAt).toISOString(),
           status: item.status,
+          phase: item.phase,
           attempts: item.attempts,
           outcome: item.outcome,
           error: item.error
@@ -2324,6 +2879,7 @@
     }
   }
 
+  UI.batchPhaseLabel = batchPhaseLabel;
   for (const name of Object.getOwnPropertyNames(RunMethods.prototype)) {
     if (name === 'constructor') continue;
     Object.defineProperty(

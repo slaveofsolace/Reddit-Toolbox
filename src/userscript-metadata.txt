@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Reddit Toolbox
 // @namespace    https://github.com/slaveofsolace
-// @version      1.0.0-rc.1
-// @description  Preview, overwrite, and delete your own Reddit posts and comments.
+// @version      1.0.0-rc.2
+// @description  Automatically overwrite and delete selected Reddit posts and comments in one reviewed batch.
 // @author       slaveofsolace
 // @license      MIT
 // @match        https://www.reddit.com/*
@@ -16,7 +16,7 @@
 // @grant        GM_deleteValue
 // @grant        GM_registerMenuCommand
 // @homepageURL  https://github.com/slaveofsolace/Reddit-Toolbox
-// @supportURL   https://github.com/slaveofsolace/Insta-Toolbox/issues
+// @supportURL   https://github.com/slaveofsolace/Reddit-Toolbox/issues
 // @downloadURL  https://raw.githubusercontent.com/slaveofsolace/Reddit-Toolbox/main/userscripts/reddit-toolbox.user.js
 // @updateURL    https://raw.githubusercontent.com/slaveofsolace/Reddit-Toolbox/main/userscripts/reddit-toolbox.user.js
 // ==/UserScript==

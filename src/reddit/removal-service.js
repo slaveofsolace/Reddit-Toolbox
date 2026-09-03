@@ -18,7 +18,12 @@
       this.sleep = options.sleep || Core.wait;
       this.random = options.random || Math.random;
       this.randomSource = options.randomSource || globalThis.crypto;
+      this.expectedUsername = String(options.expectedUsername || '').trim();
       this.states = new Map();
+    }
+
+    report(context, phase, detail = {}) {
+      context?.reportPhase?.(phase, detail);
     }
 
     stateFor(fullname) {
@@ -42,6 +47,18 @@
         }
       }
       return false;
+    }
+
+    async ensureSession(context) {
+      if (!this.expectedUsername) return;
+      if (typeof this.client.assertSession !== 'function') {
+        throw new Core.PauseRequiredError(
+          'The Reddit adapter cannot revalidate the active account for this automated batch.',
+          { code: 'SESSION_RECHECK_UNAVAILABLE' }
+        );
+      }
+      this.report(context, 'checking-session');
+      await this.client.assertSession(this.expectedUsername, true);
     }
 
     async ensureOwnership(item, state) {
@@ -82,9 +99,10 @@
       return error?.code === 'NETWORK_ERROR' || (error?.retryable && Number(error?.status) >= 500);
     }
 
-    async remove(item) {
+    async remove(item, context = {}) {
       const directDelete = item.kind === 'post' && item.editable === false;
       if (directDelete && !this.deleteUneditablePosts) {
+        this.report(context, 'skipped', { reason: 'post-has-no-editable-body' });
         return {
           status: 'skipped',
           reason: 'post-has-no-editable-body',
@@ -95,7 +113,9 @@
 
       const state = this.stateFor(item.fullname);
       if (state.deleteSent) {
+        this.report(context, 'verifying-deletion');
         await this.verifyDeleted(item, state);
+        this.report(context, 'complete');
         return {
           status: 'completed',
           reason: directDelete ? 'deleted-uneditable-post' : 'overwritten-and-deleted',
@@ -105,9 +125,12 @@
         };
       }
 
+      await this.ensureSession(context);
+      this.report(context, 'checking-ownership');
       await this.ensureOwnership(item, state);
 
       if (directDelete) {
+        this.report(context, 'deleting-direct');
         state.deleteSent = true;
         try {
           await this.client.delete(item.fullname);
@@ -117,7 +140,9 @@
             throw error;
           }
         }
+        this.report(context, 'verifying-deletion');
         await this.verifyDeleted(item, state);
+        this.report(context, 'complete');
         return {
           status: 'completed',
           reason: 'deleted-uneditable-post',
@@ -128,10 +153,12 @@
       }
 
       if (!state.replacement) {
+        this.report(context, 'preparing-replacement');
         state.replacement = Core.randomLetterString(this.replacementLength, this.randomSource);
       }
 
       if (state.editSent && !state.edited) {
+        this.report(context, 'verifying-overwrite');
         const alreadySaved = await this.verifyWithRetries(
           () => this.client.verifyText(item.fullname, state.replacement)
         );
@@ -140,6 +167,7 @@
       }
 
       if (!state.edited) {
+        this.report(context, 'overwriting');
         state.editSent = true;
         try {
           await this.client.edit(item.fullname, state.replacement);
@@ -149,6 +177,7 @@
             state.editSent = false;
             throw error;
           }
+          this.report(context, 'verifying-overwrite');
           const saved = await this.verifyWithRetries(
             () => this.client.verifyText(item.fullname, state.replacement)
           );
@@ -161,9 +190,11 @@
       }
 
       const settleMs = Core.randomBetween(this.minimumSettleMs, this.maximumSettleMs, this.random);
+      this.report(context, 'waiting-for-save', { delayMs: settleMs });
       await this.sleep(settleMs);
 
       if (this.verifyOverwrite) {
+        this.report(context, 'verifying-overwrite');
         const verified = await this.verifyWithRetries(
           () => this.client.verifyText(item.fullname, state.replacement)
         );
@@ -175,6 +206,7 @@
         }
       }
 
+      this.report(context, 'deleting');
       state.deleteSent = true;
       try {
         await this.client.delete(item.fullname);
@@ -184,7 +216,9 @@
           throw error;
         }
       }
+      this.report(context, 'verifying-deletion');
       await this.verifyDeleted(item, state);
+      this.report(context, 'complete');
       return {
         status: 'completed',
         reason: 'overwritten-and-deleted',

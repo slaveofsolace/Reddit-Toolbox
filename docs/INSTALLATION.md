@@ -9,30 +9,38 @@
 5. Sign in to Reddit and reload the tab.
 6. Select the orange **RT** launcher. The Tampermonkey menu also includes **Open Reddit Toolbox**.
 
-## Prepare complete history
+## Prepare broader history
 
-The profile scan is useful for currently available history. For a broader cleanup:
+The profile scan retrieves history exposed by Reddit's profile listings. For older content:
 
 1. Request your Reddit data from `https://www.reddit.com/settings/data-request`.
 2. Download and extract the archive when Reddit makes it available.
 3. In Reddit Toolbox, choose **Import archive CSV**.
 4. Select `comments.csv`, `posts.csv`, or both.
 
-The archive is read locally. Reddit Toolbox does not upload the CSV files.
+The archive is read locally and is not uploaded by Reddit Toolbox.
 
-## First cleanup
+## Run an automated cleanup
 
-1. Start with a small amount, such as one disposable comment.
-2. Build the preview and inspect the target, content type, subreddit, and date.
-3. Export the selected content before deleting anything important.
-4. Type the exact confirmation phrase shown by the tool.
-5. Keep the tab open during the run. Use **Pause** or **Stop** when needed.
+1. Select comments, posts, or both.
+2. Set the date window, maximum amount, ordering, and any exclusions.
+3. Select **Scan history** or import archive CSV files.
+4. Select **Prepare batch** and review the selected rows.
+5. Export the selected content before deleting anything important.
+6. Type the displayed confirmation once.
+7. Select **Run entire batch**.
 
-Link and media posts have no editable body. They are skipped unless **Delete link/media posts directly** is enabled.
+No per-item confirmation is required. The toolbox automatically advances through the complete reviewed batch. It waits through rate limits, retries temporary failures, and continues after isolated item failures.
+
+The panel may be closed during the run. The orange launcher becomes a progress indicator and signals when attention is required. Keep the Reddit tab open; a reload or full navigation ends the in-memory run and never resumes it automatically.
+
+Use **Pause batch** to hold before the next operation boundary. Use **Stop after current item** to let the active item settle and stop the remainder. Then use **Prepare retry batch** to collect failed and stopped items into one new reviewed batch.
+
+Link and media posts have no editable body. They are skipped unless **Delete link/media posts directly** is enabled before the batch is prepared.
 
 ## Update
 
-Tampermonkey checks the userscript's `@updateURL`. Installing a newer build replaces the existing RC1 copy.
+Tampermonkey checks the userscript's `@updateURL`. Installing a newer build replaces the existing copy.
 
 ## Remove
 

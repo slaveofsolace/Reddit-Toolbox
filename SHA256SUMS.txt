@@ -1,1 +1,1 @@
-46c993eb2811219c951095804491d74261484ef7f8219df2d6b039b8be61d4a1  userscripts/reddit-toolbox.user.js
+379f2757d542e1558fbfa67b8978157f7924c6fac78d4d679728dc37f3018c6b  userscripts/reddit-toolbox.user.js

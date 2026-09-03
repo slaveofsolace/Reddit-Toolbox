@@ -18,16 +18,21 @@
     verifyOverwrite: true,
     replacementLength: 24,
     minimumDelaySeconds: 4.5,
-    maximumDelaySeconds: 8.5
+    maximumDelaySeconds: 8.5,
+    continueOnFailure: true,
+    maxConsecutiveFailures: 5
   });
 
   const staticMarkup = String.raw`
-    <button class="launcher" type="button" title="Open Reddit Toolbox" aria-label="Open Reddit Toolbox">RT</button>
+    <button class="launcher" type="button" title="Open Reddit Toolbox" aria-label="Open Reddit Toolbox">
+      <span class="launcher-label">RT</span>
+      <span class="launcher-badge" hidden></span>
+    </button>
     <aside class="panel" role="dialog" aria-label="Reddit Toolbox" aria-modal="false">
       <header class="header">
         <div class="brand">
           <strong>Reddit Toolbox</strong>
-          <span>Local cleanup · RC1</span>
+          <span>Automated history cleanup · RC2</span>
         </div>
         <button class="icon-button close" type="button" aria-label="Close">✕</button>
       </header>
@@ -35,7 +40,7 @@
       <div class="content">
         <section class="section">
           <div class="notice">
-            Deletion is permanent. Review the preview first. The tool edits eligible text to random letters, verifies the change, then deletes it one item at a time.
+            One confirmation starts the entire selected batch. No per-item clicks are required. Keep this Reddit tab open; the batch continues while this panel is closed and pauses only when Reddit needs attention or you press Pause or Stop.
           </div>
         </section>
 
@@ -102,31 +107,35 @@
             </div>
             <div class="field">
               <label for="minimum-delay">Delay range (seconds)</label>
-              <div class="grid">
+              <div class="grid compact-grid">
                 <input id="minimum-delay" type="number" min="1" max="300" step="0.5" aria-label="Minimum delay seconds">
                 <input id="maximum-delay" type="number" min="1" max="300" step="0.5" aria-label="Maximum delay seconds">
               </div>
             </div>
           </div>
 
+          <div class="automation-note">
+            Reddit Toolbox automatically waits through rate limits, retries temporary failures, and continues past isolated item failures. Five consecutive failures pause the batch for review.
+          </div>
+
           <div class="actions">
-            <button class="button primary scan" type="button">Scan profile</button>
+            <button class="button primary scan" type="button">Scan history</button>
             <button class="button import" type="button">Import archive CSV</button>
             <input class="file-input archive-input" type="file" accept=".csv,text/csv" multiple>
-            <button class="button build-preview" type="button">Build preview</button>
+            <button class="button build-preview" type="button">Prepare batch</button>
           </div>
           <div class="status-line scan-status" role="status">For complete history, extract comments.csv and posts.csv from a Reddit data export.</div>
         </section>
 
         <section class="section preview-section">
-          <div class="section-title"><h2>2. Review</h2><span class="preview-caption">No plan built</span></div>
+          <div class="section-title"><h2>2. Review batch</h2><span class="preview-caption">No batch prepared</span></div>
           <div class="summary">
             <div class="metric"><strong class="found-count">0</strong><span>Found</span></div>
             <div class="metric"><strong class="selected-count">0</strong><span>Selected</span></div>
             <div class="metric"><strong class="comment-count">0</strong><span>Comments</span></div>
             <div class="metric"><strong class="post-count">0</strong><span>Posts</span></div>
           </div>
-          <div class="preview"><div class="preview-empty">Scan or import data, then build a preview.</div></div>
+          <div class="preview"><div class="preview-empty">Scan or import data, then prepare a batch.</div></div>
           <div class="actions">
             <button class="button export-backup" type="button" disabled>Export selected content</button>
             <button class="button export-log" type="button" disabled>Export run log</button>
@@ -134,17 +143,25 @@
         </section>
 
         <section class="section run-section">
-          <div class="section-title"><h2>3. Run</h2><span>Explicit confirmation required</span></div>
+          <div class="section-title"><h2>3. Automate</h2><span>One confirmation for the whole batch</span></div>
           <div class="confirm">
-            <span>Type <code class="confirmation-phrase">DELETE 0 ITEMS</code> to unlock the run.</span>
+            <span>Type <code class="confirmation-phrase">DELETE 0 ITEMS</code> once to unlock the complete batch.</span>
             <input class="confirmation-input" type="text" autocomplete="off" spellcheck="false" aria-label="Deletion confirmation">
           </div>
+          <div class="batch-summary" aria-live="polite">
+            <div class="metric"><strong class="processed-count">0</strong><span>Processed</span></div>
+            <div class="metric"><strong class="remaining-count">0</strong><span>Remaining</span></div>
+            <div class="metric"><strong class="failed-count">0</strong><span>Failed</span></div>
+            <div class="metric"><strong class="current-count">—</strong><span>Current</span></div>
+          </div>
+          <div class="current-action">Ready to run the selected batch automatically.</div>
           <progress class="progress" value="0" max="1"></progress>
           <div class="status-line run-status" role="status">Idle</div>
-          <div class="actions">
-            <button class="button danger start" type="button" disabled>Start cleanup</button>
-            <button class="button pause" type="button" disabled>Pause</button>
-            <button class="button stop" type="button" disabled>Stop</button>
+          <div class="actions run-actions">
+            <button class="button danger start" type="button" disabled>Run entire batch</button>
+            <button class="button pause" type="button" disabled>Pause batch</button>
+            <button class="button stop" type="button" disabled>Stop after current item</button>
+            <button class="button retry" type="button" disabled>Prepare retry batch</button>
           </div>
           <div class="log">No run activity.</div>
         </section>

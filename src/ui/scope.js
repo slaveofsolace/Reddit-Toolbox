@@ -81,13 +81,15 @@
           ...this.settings,
           keepSubreddits: this.settings.keepSubreddits
         });
+        this.removalService = null;
+        this.removalServiceClient = null;
         this.plan = Core.createPlan(selection.selected, this.settings);
         this.plan.selectionSkipped = selection.skipped;
         this.refs.confirmationInput.value = '';
         this.renderPlan();
         this.setStatus(
           this.refs.scanStatus,
-          `${selection.selected.length} selected; ${Object.values(selection.skipped).reduce((sum, count) => sum + count, 0)} excluded by filters.`,
+          `${selection.selected.length} queued for one automated batch; ${Object.values(selection.skipped).reduce((sum, count) => sum + count, 0)} excluded by filters.`,
           'success'
         );
       } catch (error) {
@@ -97,16 +99,27 @@
 
     invalidatePlan(message = '') {
       this.plan = null;
+      this.removalService = null;
+      this.removalServiceClient = null;
       this.refs.confirmationInput.value = '';
       this.refs.confirmationPhrase.textContent = 'DELETE 0 ITEMS';
       this.refs.selectedCount.textContent = '0';
       this.refs.commentCount.textContent = '0';
       this.refs.postCount.textContent = '0';
-      this.refs.previewCaption.textContent = 'No plan built';
+      this.refs.processedCount.textContent = '0';
+      this.refs.remainingCount.textContent = '0';
+      this.refs.failedCount.textContent = '0';
+      this.refs.currentCount.textContent = '—';
+      this.refs.previewCaption.textContent = 'No batch prepared';
+      this.refs.currentAction.textContent = 'Ready to run the selected batch automatically.';
+      this.refs.progress.max = 1;
+      this.refs.progress.value = 0;
+      this.refs.retry.disabled = true;
       this.refs.preview.replaceChildren(Object.assign(document.createElement('div'), {
         className: 'preview-empty',
-        textContent: 'Build a preview before starting a cleanup.'
+        textContent: 'Prepare a batch before starting cleanup.'
       }));
+      this.setLauncherState('idle');
       if (message) this.setStatus(this.refs.scanStatus, message);
       this.refreshControls();
     }
@@ -121,9 +134,17 @@
       this.refs.selectedCount.textContent = String(contents.length);
       this.refs.commentCount.textContent = String(contents.filter((item) => item.kind === 'comment').length);
       this.refs.postCount.textContent = String(contents.filter((item) => item.kind === 'post').length);
-      this.refs.previewCaption.textContent = `Plan ${this.plan.digest}`;
+      this.refs.previewCaption.textContent = `Automated batch ${this.plan.digest}`;
       this.refs.confirmationPhrase.textContent = this.plan.confirmation;
       this.refs.preview.replaceChildren();
+      this.refs.processedCount.textContent = '0';
+      this.refs.remainingCount.textContent = String(contents.length);
+      this.refs.failedCount.textContent = '0';
+      this.refs.currentCount.textContent = '—';
+      this.refs.currentAction.textContent = 'Ready to run the selected batch automatically.';
+      this.setStatus(this.refs.runStatus, contents.length
+        ? `Ready · one confirmation will process all ${contents.length} selected items.`
+        : 'No matching items.');
 
       if (!contents.length) {
         this.refs.preview.append(Object.assign(document.createElement('div'), {
@@ -156,21 +177,23 @@
           const status = document.createElement('div');
           status.className = `item-status ${queueItem.status}`;
           status.textContent = item.kind === 'post' && !item.editable
-            ? 'Link/media post · direct delete only'
-            : 'Ready · overwrite then delete';
+            ? 'Queued · direct delete (explicitly enabled)'
+            : 'Queued · automatic overwrite, verification, and deletion';
           row.append(head, snippet, status);
           this.refs.preview.append(row);
         }
         if (contents.length > 100) {
           this.refs.preview.append(Object.assign(document.createElement('div'), {
             className: 'preview-empty',
-            textContent: `${contents.length - 100} more items are included in this plan.`
+            textContent: `${contents.length - 100} more items are included in this batch.`
           }));
         }
       }
       this.refs.progress.max = Math.max(1, contents.length);
       this.refs.progress.value = 0;
       this.refs.exportBackup.disabled = contents.length === 0;
+      this.refs.retry.disabled = true;
+      this.setLauncherState('idle');
       this.refreshControls();
     }
   }

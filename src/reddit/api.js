@@ -31,6 +31,10 @@
     }));
   }
 
+  function sameUsername(left, right) {
+    return String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
+  }
+
   class RedditSessionClient {
     constructor(options = {}) {
       const defaultFetch = globalThis.fetch?.bind(globalThis);
@@ -171,6 +175,20 @@
       return { username: this.username, modhash: this.modhash };
     }
 
+    async assertSession(expectedUsername, requireModhash = true) {
+      const session = await this.getSession(requireModhash);
+      if (expectedUsername && !sameUsername(session.username, expectedUsername)) {
+        throw new Core.PauseRequiredError(
+          `The signed-in Reddit account changed from u/${expectedUsername} to u/${session.username}. Switch back before resuming.`,
+          {
+            code: 'ACCOUNT_CHANGED',
+            details: { expectedUsername, actualUsername: session.username }
+          }
+        );
+      }
+      return session;
+    }
+
     async listUserContent(kind, options = {}) {
       if (!this.username) await this.getSession();
       const section = kind === 'comment' ? 'comments' : 'submitted';
@@ -245,5 +263,6 @@
   Reddit.retryAfterMilliseconds = retryAfterMilliseconds;
   Reddit.rateLimitFromMessage = rateLimitFromMessage;
   Reddit.apiErrors = apiErrors;
+  Reddit.sameUsername = sameUsername;
   Reddit.RedditSessionClient = RedditSessionClient;
 })();

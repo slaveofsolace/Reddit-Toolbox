@@ -7,10 +7,13 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const script = await readFile(path.join(root, 'userscripts/reddit-toolbox.user.js'), 'utf8');
 const required = [
   '// ==UserScript==',
-  '@version      1.0.0-rc.1',
+  '@version      1.0.0-rc.2',
   'class RedditSessionClient',
-  'class ControlledRunner',
+  'class BatchRunner',
+  'class RedditRemovalService',
   'class RedditToolboxApp',
+  'One confirmation starts the entire selected batch',
+  'Run entire batch',
   'toolbox.App.start()'
 ];
 

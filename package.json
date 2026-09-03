@@ -1,8 +1,8 @@
 {
   "name": "reddit-toolbox",
-  "version": "1.0.0-rc.1",
+  "version": "1.0.0-rc.2",
   "private": true,
-  "description": "Local-first Reddit history cleanup userscript.",
+  "description": "Local-first automated Reddit history cleanup userscript.",
   "type": "module",
   "scripts": {
     "build": "node scripts/build-userscript.mjs",

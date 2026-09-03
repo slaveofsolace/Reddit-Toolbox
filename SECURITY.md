@@ -2,7 +2,7 @@
 
 ## Supported version
 
-Security fixes currently target `1.0.0-rc.1` until a stable release replaces it.
+Security fixes currently target `1.0.0-rc.2` until a stable release replaces it.
 
 ## Reporting
 
@@ -11,14 +11,18 @@ Do not post account data, archive files, session values, or access tokens in a p
 ## Safety boundaries
 
 - The adapter accepts only `reddit.com` origins.
-- Every target uses a strict Reddit fullname and exact content type.
-- Ownership is checked against the signed-in account before mutation.
+- A finite batch is bound to exact Reddit fullnames, ordered targets, editability, and destructive options.
+- One explicit confirmation authorizes the reviewed batch; no item is added after confirmation.
+- The active Reddit account is revalidated before every item, then ownership is checked before mutation.
 - Editable content must pass overwrite verification before deletion.
 - Deletion is verified after the request.
 - Ambiguous edit results are verified before retry, and the same replacement is reused.
 - Ambiguous delete results pause and are not resent automatically, including lost responses and HTTP 5xx results.
 - Link and media posts are skipped unless direct deletion is explicitly reviewed.
-- Runs are sequential, paced, stoppable, and never restored after reload.
-- The script does not read raw cookies, collect passwords, or use dynamic code evaluation.
+- Requests are sequential and paced even though the full batch is automated.
+- Rate limits and temporary failures recover automatically; repeated failures trigger an attention pause.
+- A Web Locks exclusive lock prevents concurrent batches across tabs where supported, with an in-page fallback elsewhere.
+- Active runs warn before navigation and are never restored or resumed silently after reload.
+- The script does not read raw cookies, collect passwords, use remote code, or use dynamic evaluation.
 
 This project cannot remove copies held outside Reddit or guarantee how Reddit retains data internally.
