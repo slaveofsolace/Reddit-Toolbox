@@ -48,6 +48,7 @@ See [Privacy](docs/PRIVACY.md), [Security](SECURITY.md), and [Architecture](docs
 Requirements: Node.js 20 or newer.
 
 ```sh
+npm ci --ignore-scripts --no-audit --no-fund
 npm run check
 ```
 
@@ -55,7 +56,7 @@ The current RC1 passes 41 automated tests plus final userscript syntax and integ
 
 ## RC1 handoff
 
-The remaining authenticated Reddit acceptance work and dedicated-repository split are documented in [Codex Handoff](docs/CODEX_HANDOFF.md). The required live checks are in [Release Checklist](docs/RELEASE_CHECKLIST.md).
+The remaining authenticated Reddit acceptance work is documented in [Codex Handoff](docs/CODEX_HANDOFF.md). The required live checks are in [Release Checklist](docs/RELEASE_CHECKLIST.md).
 
 ## License
 
