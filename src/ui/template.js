@@ -30,7 +30,7 @@
     <aside class="panel" id="rt-panel" role="dialog" aria-label="Reddit Toolbox" aria-modal="false">
       <header class="header">
         <button class="icon-button move-window" type="button" aria-label="Move window" title="Drag to move. Arrow keys move; Shift moves farther.">⠿</button>
-        <div class="brand"><strong>Reddit Toolbox</strong><span>Your Reddit history <small>RC5</small></span></div>
+        <div class="brand"><strong>Reddit Toolbox</strong><span>Your Reddit history <small>RC6</small></span></div>
         <button class="icon-button reset-window" type="button" aria-label="Reset window layout" title="Reset size and position">↺</button>
         <button class="icon-button close" type="button" aria-label="Close">✕</button>
       </header>
@@ -43,7 +43,7 @@
             <div class="field full"><label for="date-mode">Date range</label><select id="date-mode"><option value="all">All time</option><option value="before">Before a date</option><option value="after">After a date</option><option value="between">Between dates</option></select></div>
             <div class="field from-field"><label for="from-date">From</label><input id="from-date" type="date"></div>
             <div class="field through-field"><label for="through-date">Through</label><input id="through-date" type="date"></div>
-            <div class="field"><label for="max-items">Limit</label><input id="max-items" type="number" min="0" max="100000" step="1" inputmode="numeric" placeholder="All matching items"></div>
+            <div class="field"><label for="limit-mode">Limit</label><select id="limit-mode"><option value="all">No limit</option><option value="count">Set a limit</option></select><div class="field amount-field" hidden><label for="max-items">Number of items</label><input id="max-items" type="number" min="1" max="100000" step="1" inputmode="numeric" value="100"></div></div>
             <div class="field"><label for="sort-order">Order</label><select id="sort-order"><option value="oldest">Oldest first</option><option value="newest">Newest first</option></select></div>
           </div>
           <details class="advanced"><summary>More options</summary>

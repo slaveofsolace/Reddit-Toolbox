@@ -2,7 +2,7 @@
 
 ## Supported version
 
-Security fixes currently target `1.0.0-rc.5` until a stable release replaces it.
+Security fixes currently target `1.0.0-rc.6` until a stable release replaces it.
 
 ## Reporting
 
@@ -15,7 +15,7 @@ Do not post account data, archive files, session values, or access tokens in a p
 - The explicit Delete button authorizes the reviewed batch; no item is added after starting.
 - The active Reddit account is revalidated before every item, then ownership is checked before mutation.
 - Editable content must pass overwrite verification before deletion.
-- Deletion requires a deleted marker or an acknowledged deletion of a verified owned item followed by two valid absent-item reads. Missing data alone never proves deletion.
+- Deletion requires a deleted marker, or an acknowledged deletion of a verified owned item followed by two valid absent-item reads. A comment’s verified owner changing to [deleted] after an acknowledged deletion also confirms the result when Reddit keeps [removed] as the body. Missing data or moderation removal alone never proves deletion.
 - Ambiguous edit results are verified before retry, and the same replacement is reused.
 - Ambiguous delete results are counted separately and are not blindly resent, including lost responses and HTTP 5xx results. Other items continue; later rechecks perform reads only and revalidate the account.
 - An acknowledged no-op may receive one bounded retry after repeated reads and fresh account, ownership, editability, and replacement checks.

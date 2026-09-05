@@ -1,5 +1,13 @@
 # Codex handoff
 
+## RC6 live repair
+
+Chrome background control now attaches to the owner's actual tab. The failing installed RC5 run had 300 selected comments, with the first six reported unconfirmed. It is stopped at six processed with 294 untouched items stopped. A live delete returned HTTP 200 {}, then exact-target info returned author [deleted] / body [removed]. The native comment page marks the first target deleted. RC6 fixes this acknowledged, ownership-verified transition without accepting moderation removal alone. It also respects x-ratelimit-reset and an exhausted request budget, keeps start/resume identity validation inside automatic runner recovery, and adds explicit No limit / Set a limit controls. 89 tests pass; portable browser fixtures include the live response shape. Installed RC6 acceptance is still required.
+
+The original 300-comment scope was selected and started by the owner. Preserve its stopped checkpoint. Do not publish target IDs, account identifiers, original text, session values, or full request headers. The extension-update URL policy restriction still applies; do not bypass it.
+
+## Earlier RC5 checkpoint
+
 RC5 addresses the owner's report of too many setup/confirmation steps, a fixed panel, and deletion verification trapping the batch. The product remains a userscript using the existing Reddit browser login. Do not reintroduce OAuth, client IDs, API keys, or a backend.
 
 The user authorized committing to main, installing/updating software, and testing their own Reddit content. Use a concrete exact batch for any live destructive acceptance under the applicable tool policy. The previously confirmed RC4 two-comment batch is complete and must not be repeated.

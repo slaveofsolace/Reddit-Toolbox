@@ -5,7 +5,10 @@
 
   function retryAfterMilliseconds(response, fallback = 60_000) {
     const header = response?.headers?.get?.('retry-after');
-    if (!header) return fallback;
+    if (!header) {
+      const reset = Number(response?.headers?.get?.('x-ratelimit-reset'));
+      return Number.isFinite(reset) && reset > 0 ? Math.ceil(reset * 1_000) + 1_000 : fallback;
+    }
     const seconds = Number(header);
     if (Number.isFinite(seconds)) return Math.max(1_000, seconds * 1_000);
     const date = new Date(header).getTime();
@@ -42,6 +45,8 @@
       this.origin = options.origin || globalThis.location?.origin || 'https://www.reddit.com';
       this.modhash = options.modhash || '';
       this.username = options.username || '';
+      this.rateLimitUntil = 0;
+      this.now = options.now || Date.now;
       this.requestTimeoutMs = Math.max(100, Math.min(60_000, Number(options.requestTimeoutMs) || 30_000));
       if (typeof this.fetch !== 'function') throw new Error('Fetch is unavailable.');
     }
@@ -57,6 +62,10 @@
 
     async readResponse(response) {
       const contentType = response.headers?.get?.('content-type') || '';
+      const remaining = response.headers?.get?.('x-ratelimit-remaining');
+      if (response.status === 429 || (remaining !== null && remaining !== undefined && remaining !== '' && Number(remaining) <= 0)) {
+        this.rateLimitUntil = Math.max(this.rateLimitUntil, this.now() + retryAfterMilliseconds(response));
+      }
       // Interpret definite HTTP rejection before attempting to read a possibly broken body.
       if (response.status === 429) throw new Core.RateLimitError('Reddit asked the tool to slow down.', retryAfterMilliseconds(response));
       if (response.status === 401) throw new Core.AuthError('Your Reddit session expired. Sign in again, then resume.', { status: 401 });
@@ -122,6 +131,9 @@
 
     async request(path, init) {
       const url = this.url(path);
+      if (this.rateLimitUntil > this.now()) {
+        throw new Core.RateLimitError('Waiting for Reddit’s request allowance to reset.', this.rateLimitUntil - this.now());
+      }
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
       try {
@@ -278,6 +290,7 @@
         || (deletedAuthor && ['', '[deleted]'].includes(text.trim().toLowerCase()));
       return {
         status: deleted ? 'deleted' : 'present',
+        authorDeleted: deletedAuthor,
         owned: Boolean(this.username && sameUsername(data.author, this.username)),
         editable: child.kind === 't1' || data.is_self === true,
         text

@@ -1,6 +1,6 @@
 # Installation
 
-Install the single RC5 userscript. Your normal Reddit login is the only account setup.
+Install the single RC6 userscript. Your normal Reddit login is the only account setup.
 
 ## Install
 
@@ -12,7 +12,7 @@ No registered app, OAuth authorization, client ID, or API key is needed. [Sessio
 
 ## Clean up
 
-1. Choose comments, posts, dates, an optional limit, and order. Select **Find matching items**.
+1. Choose comments, posts, dates, **No limit** or **Set a limit**, and order. Select **Find matching items**.
 2. Review the matches. **Keep** excludes a row and **Save a copy** exports the selection. Select **Delete N items** to start.
 
 Editable bodies are overwritten, read back, deleted, and verified automatically. Deletion is permanent. There is no typed phrase, separate preparation step, or per-item confirmation. Filter changes update the review automatically.
@@ -39,6 +39,6 @@ Signed-out archive review is available. Sign in normally, then select **Check lo
 
 ## Update or remove
 
-Reopen the install link and select **Update**, or let Tampermonkey use the script's update URL. RC5 keeps the same name, namespace, and permissions as RC4. Reload Reddit after an update to use the new version; finish or stop any old run first because a reload discards its in-memory progress.
+Reopen the install link and select **Update**, or let Tampermonkey use the script's update URL. RC6 keeps the same name, namespace, and permissions as RC5. Reload Reddit after an update to use the new version; finish or stop any old run first because a reload discards its in-memory progress.
 
 To uninstall, remove **Reddit Toolbox** through Tampermonkey. Uninstalling cannot reverse completed Reddit edits or deletions.

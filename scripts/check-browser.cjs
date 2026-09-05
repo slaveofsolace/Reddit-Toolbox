@@ -16,7 +16,8 @@ async function exercise(browserType, label) {
   const calls = [];
   const records = new Map();
   let signedIn = true;
-  let deletionMode = 'missing';
+  let deletionMode = 'removed-body';
+  let identityRateOnce = false;
   let deleteReads = new Map();
   let owner = 'fixture-owner';
   const data = (name, kind='t1', self=true) => ({ kind, data: { name, id:name.slice(3), author:'fixture-owner', created_utc:1700000000, subreddit:'fixture', score:1, is_self:self, body:'Synthetic disposable fixture.', selftext:self?'Synthetic body.':'', title:'Synthetic title', permalink:'/r/fixture/comments/a/' } });
@@ -32,6 +33,7 @@ async function exercise(browserType, label) {
     if(url.origin !== 'https://www.reddit.com') throw new Error('Unexpected request origin: '+url.origin);
     let payload={};
     if(request.isNavigationRequest()) return route.fulfill({contentType:'text/html',body:'<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Reddit Toolbox acceptance fixture</title></head><body style="margin:0;background:#edf0f2;font:16px system-ui"><main style="padding:40px"><h1>Reddit fixture</h1><p>Isolated browser acceptance. All API responses are synthetic.</p></main></body></html>'});
+    if(url.pathname==='/api/me.json' && identityRateOnce){identityRateOnce=false;return route.fulfill({status:429,headers:{'retry-after':'1'},body:''});}
     if(url.pathname==='/api/me.json') payload={data:signedIn?{name:owner,modhash:'fixture-only'}:{}};
     else if(url.pathname.includes('/comments.json')) payload={data:{children:[...records.values()].filter(x=>x.kind==='t1'),after:null}};
     else if(url.pathname.includes('/submitted.json')) payload={data:{children:[...records.values()].filter(x=>x.kind==='t3'),after:null}};
@@ -51,6 +53,7 @@ async function exercise(browserType, label) {
       if(deletionMode==='uncertain' && row.data.name==='t1_a') return route.abort('failed');
       if(deletionMode==='noop' && attempts===1) {}
       else if(deletionMode==='missing') records.delete(row.data.name);
+      else if(deletionMode==='removed-body' && row.kind==='t1'){row.data.author='[deleted]';row.data.body='[removed]';}
       else {row.data.author=null; row.data[row.kind==='t1'?'body':'selftext']='[deleted]';}
     } else throw new Error('Unrecognized fixture endpoint: '+url.pathname);
     return route.fulfill({contentType:'application/json',headers:{'Access-Control-Allow-Origin':'https://www.reddit.com'},body:JSON.stringify(payload)});
@@ -95,12 +98,15 @@ async function exercise(browserType, label) {
   await page.locator('.launcher').click();assert.equal(await page.locator('.panel').isVisible(),true);
   await page.locator('.reset-window').click();assert.deepEqual(await box(),initial);
   await prepare(page);
+  assert.equal(await page.locator('#limit-mode').inputValue(),'all');
+  assert.equal(await page.locator('#max-items').isVisible(),false);
+  await page.locator('#limit-mode').selectOption('count');
   await page.locator('#max-items').fill('1');
   await page.waitForFunction(()=>__redditToolboxApp.plan?.items.length===1);
   assert.equal(await page.locator('.start').textContent(),'Delete 1 item');
   await page.locator('.keep-item').click();
   assert.equal(await page.locator('.start').isDisabled(),true);
-  await page.locator('#max-items').fill('');
+  await page.locator('#limit-mode').selectOption('all');
   await page.waitForFunction(()=>__redditToolboxApp.plan?.items.length===2);
   await drag('.resize-right',-200,-380);
   await page.screenshot({path:out+'/'+label+'-compact-review.png'});
@@ -113,6 +119,7 @@ async function exercise(browserType, label) {
   assert.equal(await page.locator('.start').isVisible(),true);
   await page.screenshot({path:out+'/'+label+'-archive-review.png'});
   const second=await newPage(); await prepare(second);
+  identityRateOnce = true;
   await page.locator('.start').click();
   await page.waitForFunction(()=>['running','waiting'].includes(globalThis.__redditToolboxApp.runner?.state));
   assert.equal(await page.locator('#include-comments').isDisabled(),true);
@@ -135,7 +142,7 @@ async function exercise(browserType, label) {
   await page.reload();
   assert.equal(await page.evaluate(()=>globalThis.__redditToolboxApp.plan),null);
   assert.equal(await page.evaluate(()=>globalThis.__redditToolboxApp.runner),null);
-  reset(true);
+  reset(true); deletionMode='missing';
   await page.locator('.launcher').click();
 
   await prepare(page,true);
@@ -169,6 +176,14 @@ async function exercise(browserType, label) {
   assert.deepEqual(calls.map(({op,id})=>op+':'+id),['edit:t1_a','delete:t1_a','edit:t1_b','delete:t1_b']);
   records.get('t1_a').data.author=null; records.get('t1_a').data.body='[deleted]';
   const beforeRecheck=calls.length;
+  identityRateOnce = true;
+  await page.locator('.recheck').click();
+  await page.waitForFunction(()=>__redditToolboxApp.refs.currentAction.textContent.includes('Reddit cooldown'));
+  assert.equal(await page.locator('.stop').textContent(),'Cancel recheck');
+  await page.locator('.stop').click();
+  await page.waitForFunction(()=>!__redditToolboxApp.busy);
+  assert.equal(await page.locator('.unconfirmed-count').textContent(),'1');
+  assert.equal(calls.length,beforeRecheck);
   await page.locator('.recheck').click();await page.waitForFunction(()=>!__redditToolboxApp.busy);
   assert.equal(await page.locator('.deleted-count').textContent(),'2');assert.equal(calls.length,beforeRecheck);
   assert.equal(await page.locator('.unconfirmed-count').textContent(),'0');
@@ -234,9 +249,9 @@ async function exercise(browserType, label) {
   await page.locator('.clear-history').click();
   assert.equal(await page.evaluate(()=>__redditToolboxApp.allItems().length),0);
   assert.equal(await page.evaluate(()=>__redditToolboxApp.plan),null);
-  const unexpectedErrors=errors.filter(error=>!error.includes('net::ERR_FAILED')&&!error.includes('NetworkError'));
+  const unexpectedErrors=errors.filter(error=>!error.includes('net::ERR_FAILED')&&!error.includes('NetworkError')&&error!=='Failed to load resource: the server responded with a status of 429 (Too Many Requests)');
   assert.deepEqual(unexpectedErrors,[]);
-  results.push({browser:label,version:browser.version(),twoCommentBatch:'passed',mixedBatch:'passed',crossTabLock:'passed',panelClosedRun:'passed',reloadDoesNotResume:'passed',navigationWarning:'passed',settingsLock:'passed',sessionFirstWithoutSetup:'passed',logoutInvalidatesReview:'passed',accountChangeClearsStaleHistory:'passed',paginatedReview:'passed',keepItemUpdatesDeleteCount:'passed',dragResizeKeyboardPersistence:'passed',uncertainContinues:'passed',readOnlyRecheck:'passed',acknowledgedNoopRetry:'passed',clearHistory:'passed',sessionModhashOnMutations:'passed',largeArchive:{rows:50000,renderedRows:100,elapsedMs:archiveMs,uiTicks:ticks},keyboard:'passed',narrow:[390,320],expectedTransportErrors:errors.length,consoleErrors:unexpectedErrors,allNetworkIntercepted:true});
+  results.push({browser:label,version:browser.version(),twoCommentBatch:'passed',liveRemovedBodyResponse:'passed',noLimitOption:'passed',initialIdentityRateLimitRecovers:'passed',mixedBatch:'passed',crossTabLock:'passed',panelClosedRun:'passed',reloadDoesNotResume:'passed',navigationWarning:'passed',settingsLock:'passed',sessionFirstWithoutSetup:'passed',logoutInvalidatesReview:'passed',accountChangeClearsStaleHistory:'passed',paginatedReview:'passed',keepItemUpdatesDeleteCount:'passed',dragResizeKeyboardPersistence:'passed',uncertainContinues:'passed',readOnlyRecheck:'passed',acknowledgedNoopRetry:'passed',clearHistory:'passed',sessionModhashOnMutations:'passed',largeArchive:{rows:50000,renderedRows:100,elapsedMs:archiveMs,uiTicks:ticks},keyboard:'passed',narrow:[390,320],expectedTransportErrors:errors.length,consoleErrors:unexpectedErrors,allNetworkIntercepted:true});
   } finally { await browser.close(); }
 }
 (async()=>{

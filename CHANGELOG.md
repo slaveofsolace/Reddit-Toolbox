@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.0-rc.6 — 2026-09-05
+
+- Fix the reproduced live verification failure: Reddit returns an author of [deleted] with a body of [removed] for some successfully deleted comments. Confirm this transition only after an acknowledged deletion and verified ownership; moderation removal alone remains insufficient.
+- Use Reddit's x-ratelimit-reset value when Retry-After is absent. Stop sending requests when a successful response exhausts the allowance, and let the runner show the correct automatic countdown.
+- Move initial/resume identity validation into the runner's existing checked mutation path so rate limits recover automatically instead of leaving Resume blocked. Preserve account, ownership, and overwrite checks.
+- Add cancellable read-only rechecks with cooldown countdowns, and preserve stopped targets and accurate totals after rechecking.
+- Add explicit No limit and Set a limit choices, hiding the number field when No limit is selected. No limit applies to all discovered matches and does not promise lifetime listing completeness.
+- Add regressions from the observed response shape, request-budget exhaustion, automatic initial-identity recovery, and the No limit interaction.
+
 ## 1.0.0-rc.5 — 2026-09-05
 
 - Collapse scanning and preparation into Find matching items, automatically rebuild filtered reviews, and use one explicit Delete button without a typed phrase. Move less-used settings into More options.

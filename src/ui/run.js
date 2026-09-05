@@ -46,7 +46,9 @@
       this.refs.start.hidden = !this.plan || Boolean(this.plan.startedAt);
       this.refs.start.textContent = this.plan?.options.accountId ? `Delete ${summary.ready} ${summary.ready === 1 ? 'item' : 'items'}` : 'Sign in to delete';
       this.refs.pause.hidden = !active;
-      this.refs.stop.hidden = !active;
+      this.refs.stop.hidden = !active && !this.rechecking;
+      this.refs.stop.textContent = this.rechecking ? 'Cancel recheck' : 'Stop';
+      this.refs.stop.title = this.rechecking ? 'Cancel read-only verification' : 'Finish the current item, then stop';
       this.refs.retry.hidden = active || !(summary.failed || summary.stopped);
       this.refs.recheck.hidden = active || !summary.unconfirmed;
       this.refs.recheck.disabled = locked;
@@ -59,7 +61,7 @@
       this.refs.deleteNote.hidden = !this.plan?.options.accountId || Boolean(this.plan.startedAt);
       this.refs.scan.textContent = this.busy && !active ? 'Working…' : this.profileItems.length ? 'Refresh history' : 'Find matching items';
       this.refs.pause.disabled = !active || this.runner?.state === 'stopping';
-      this.refs.stop.disabled = !active || this.runner?.state === 'stopping';
+      this.refs.stop.disabled = this.rechecking ? this.recheckCancelled : !active || this.runner?.state === 'stopping';
       this.refs.retry.disabled = locked || !(summary.failed || summary.stopped);
       this.refs.pause.textContent = this.runner?.state === 'paused' ? 'Resume' : 'Pause';
       this.refs.checkLogin.disabled = locked;
@@ -191,6 +193,7 @@
           break;
         case 'wait-started':
         case 'wait-tick': {
+          if (event.state === 'paused') break;
           const prefix = event.waitReason === 'rate-limit'
             ? 'Rate limited · continuing automatically in'
             : event.waitReason === 'retry'
@@ -272,8 +275,8 @@
       this.setStatus(this.refs.runStatus, 'Verifying the Reddit session before starting…');
       try {
         const client = this.ensureClient();
-        const session = await client.assertSession(this.plan.options.accountId, true);
-        this.showAccount(session.username);
+        // The worker validates the account before every mutation. Keeping that
+        // validation inside the runner also gives it automatic rate-limit waits.
         const serviceKey = this.plan.options.accountId;
         let service = this.removalServices.get(serviceKey);
         if (!service || service.client !== client) {
@@ -301,7 +304,7 @@
         const summary = Core.planSummary(this.plan);
         this.renderCounts();
         const message = summary.stopped
-          ? `${summary.completed} deleted; ${summary.stopped} remaining items stopped.`
+          ? `${summary.completed} deleted; ${summary.unconfirmed} need recheck; ${summary.stopped} remaining items stopped.`
           : summary.unconfirmed
             ? `${summary.completed} deleted; ${summary.unconfirmed} need recheck; ${summary.failed} failed. Cleanup finished.`
           : summary.failed
@@ -325,14 +328,7 @@
     async togglePause() {
       if (!this.runner) return;
       if (this.runner.state === 'paused') {
-        this.setStatus(this.refs.runStatus, 'Refreshing the Reddit session before resuming…');
-        try {
-          await this.ensureClient().assertSession(this.plan.options.accountId, true);
-          this.runner.resume();
-        } catch (error) {
-          this.setStatus(this.refs.runStatus, UI.compactError(error), 'error');
-          this.log(`Resume blocked: ${UI.compactError(error)}`);
-        }
+        this.runner.resume();
       } else {
         this.runner.pause();
       }
@@ -340,6 +336,12 @@
     }
 
     stopRun() {
+      if (this.rechecking) {
+        this.recheckCancelled = true;
+        this.refs.currentAction.textContent = 'Cancelling the recheck…';
+        this.refreshControls();
+        return;
+      }
       this.runner?.stop();
       this.refreshControls();
     }
@@ -363,28 +365,56 @@
     async recheckResults() {
       if (this.busy || !this.plan || !this.removalService) return;
       this.busy = true;
+      this.rechecking = true;
+      this.recheckCancelled = false;
       this.refreshControls();
       try {
         const service = this.removalService;
-        for (const row of this.plan.items.filter(item => item.status === 'unconfirmed')) {
-          try {
-            await service.verifyDeleted(row.content, service.stateFor(row.content.fullname), {}, false);
-            row.status = 'completed';
-            row.phase = 'completed';
-            row.error = null;
-            row.outcome = { status: 'completed', reason: 'deletion-confirmed', deleted: true };
-          } catch (error) { row.error = { code: error.code, message: UI.compactError(error) }; }
+        const rows = this.plan.items.filter(item => item.status === 'unconfirmed');
+        for (const [index, row] of rows.entries()) {
+          if (this.recheckCancelled) break;
+          while (!this.recheckCancelled) {
+            this.refs.currentAction.textContent = `Rechecking result ${index + 1}/${rows.length} · read only`;
+            try {
+              await service.verifyDeleted(row.content, service.stateFor(row.content.fullname), {
+                isStopRequested: () => this.recheckCancelled
+              }, false);
+              row.status = 'completed';
+              row.phase = 'completed';
+              row.error = null;
+              row.outcome = { status: 'completed', reason: 'deletion-confirmed', deleted: true };
+              break;
+            } catch (error) {
+              if (error?.code === 'RATE_LIMITED') {
+                const until = Date.now() + Math.max(1_000, Number(error.retryAfterMs) || 60_000);
+                while (!this.recheckCancelled && Date.now() < until) {
+                  this.refs.currentAction.textContent = `Reddit cooldown · recheck continues in ${secondsLabel(until - Date.now())}`;
+                  await Core.wait(Math.min(1_000, until - Date.now()));
+                }
+                continue;
+              }
+              row.error = { code: error.code, message: UI.compactError(error) };
+              if (error?.pauseRequired) {
+                this.recheckCancelled = true;
+                this.log(`Recheck stopped: ${UI.compactError(error)}`);
+              }
+              break;
+            }
+          }
           this.updateQueueRow(row);
+          this.updateBatchMetrics({ summary: Core.planSummary(this.plan) });
         }
         const summary = Core.planSummary(this.plan);
         if (this.runner) this.runner.summary = { ...summary };
-        this.plan.status = summary.failed || summary.unconfirmed ? 'completed-with-failures' : 'completed';
+        this.plan.status = summary.stopped ? 'stopped' : summary.failed || summary.unconfirmed ? 'completed-with-failures' : 'completed';
         if (this.runner) this.runner.state = this.plan.status;
         this.updateBatchMetrics({ summary });
         this.renderCounts();
-        this.setStatus(this.refs.runStatus, summary.completed + ' deleted; ' + summary.unconfirmed + ' still need recheck. No deletion requests were resent.', summary.unconfirmed ? 'error' : 'success');
+        this.refs.currentAction.textContent = this.recheckCancelled ? 'Recheck stopped.' : 'Recheck complete.';
+        this.setStatus(this.refs.runStatus, `${summary.completed} deleted; ${summary.unconfirmed} need recheck${summary.stopped ? `; ${summary.stopped} remaining items stopped` : ''}.`, summary.unconfirmed || summary.failed ? 'error' : 'success');
         this.setLauncherState(this.plan.status, summary);
       } finally {
+        this.rechecking = false;
         this.busy = false;
         this.refreshControls();
       }

@@ -103,10 +103,18 @@
           : { status: await this.client.isDeleted(item.fullname) ? 'deleted' : 'unknown' };
         missingReads = last.status === 'missing' ? missingReads + 1 : 0;
         presentReads = last.status === 'present' && last.owned ? presentReads + 1 : 0;
+        // Live Reddit can preserve the moderation placeholder after an owner
+        // deletes a comment. Require our accepted delete and prior ownership;
+        // [removed] alone (or an active author) is never enough.
+        const deletedRemovedComment = item.kind === 'comment'
+          && last.authorDeleted === true && last.text?.trim().toLowerCase() === '[removed]'
+          && state.deleteAcknowledged && state.ownershipVerified;
         if (last.status === 'deleted'
+          || deletedRemovedComment
           || (missingReads >= 2 && state.deleteAcknowledged && state.ownershipVerified)) {
           state.completed = true;
-          state.deletionEvidence = last.status === 'deleted' ? 'deleted-marker' : 'accepted-and-no-longer-returned';
+          state.deletionEvidence = last.status === 'deleted' ? 'deleted-marker'
+            : deletedRemovedComment ? 'accepted-and-author-deleted' : 'accepted-and-no-longer-returned';
           return true;
         }
         if (context.isStopRequested?.()) break;

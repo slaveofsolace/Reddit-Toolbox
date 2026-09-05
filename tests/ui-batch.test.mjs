@@ -19,6 +19,8 @@ const { UI } = loadToolbox({
 
 test('review leads directly to a clearly labeled delete action without typed confirmation', () => {
   assert.match(UI.staticMarkup, /Find matching items/);
+  assert.match(UI.staticMarkup, />No limit<\/option>/);
+  assert.match(UI.staticMarkup, />Set a limit<\/option>/);
   assert.match(UI.staticMarkup, /Delete selected items/);
   assert.match(UI.staticMarkup, /Deletion is permanent/);
   assert.doesNotMatch(UI.staticMarkup, /confirmation-input|Prepare batch|replacement-length/);

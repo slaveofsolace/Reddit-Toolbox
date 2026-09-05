@@ -1,10 +1,10 @@
-# RC5 acceptance checklist
+# RC6 acceptance checklist
 
 Userscript first, 2026-09-05. Existing Reddit login; no OAuth, app registration, client ID, or API key.
 
 ## Automated checks
 
-- [x] 83 Node tests; deterministic composition, matching versions, syntax, and SHA-256 checks
+- [x] 89 Node tests; deterministic composition, matching versions, syntax, and SHA-256 checks
 - [x] Account-bound frozen targets, mutation-boundary ownership/editability and saved-text checks
 - [x] Explicit deleted markers and acknowledged deletions followed by repeated valid absent reads
 - [x] Missing data alone, mismatched IDs, malformed listings, and moderation removal rejected as deletion evidence
@@ -23,9 +23,11 @@ For local development, install optional test tooling with **npm install --no-sav
 | Flow | Chromium | Firefox |
 | --- | --- | --- |
 | Find → automatic review → one Delete action; two comments and mixed content | Pass | Pass |
-| Null-author deletion; accepted deletion no longer returned by Reddit | Pass | Pass |
+| Deleted-author/removed-body live response, null author, accepted-and-absent deletion | Pass | Pass |
+| Explicit No limit and Set a limit choices | Pass | Pass |
+| Initial identity rate limit automatically recovers inside the runner | Pass | Pass |
 | Lost response marks one item unconfirmed and continues the next | Pass | Pass |
-| Read-only recheck confirms the later result without another POST | Pass | Pass |
+| Read-only recheck, cooldown recovery and cancellation without another POST | Pass | Pass |
 | Acknowledged no-op retried once after fresh checks | Pass | Pass |
 | Header and launcher dragging, both resize corners, keyboard controls | Pass | Pass |
 | Persisted geometry, reset, narrow viewport clamping, compact footer access | Pass | Pass |
@@ -36,17 +38,20 @@ For local development, install optional test tooling with **npm install --no-sav
 | Light desktop/dark narrow rendering and keyboard focus | Pass | Pass |
 | Unexpected console/runtime errors | None | None |
 
-Local evidence is retained under work/browser-rc5 in the project handoff folder. The test's simulated lost response intentionally produces a browser network error.
+Local evidence is retained under work/browser-rc6 in the project handoff folder. The test's simulated lost response intentionally produces a browser network error.
 
-## RC5 live coverage
+## RC6 live coverage
 
-- [ ] RC5 installed-version and current-login verification
-- [ ] Reproduce and verify recovery of the owner's specifically reported failing comment
+- [ ] RC6 installed-version and current-login verification
+- [x] Reproduce the owner’s actual failure response and independently verify deletion
+- [ ] Installed RC6 batch completion with correct deleted counts
 - [ ] Fresh Firefox Tampermonkey installation
 
-The owner's older stalled tab could not be attached through the available browser tool. Its in-memory run was preserved. The reported exact failing comment has not yet been identified, so the recovery mechanisms are covered by synthetic fixtures and unit tests; they are not represented as a reproduction of that specific live failure.
+On 2026-09-05 Chrome background control attached to the owner's RC5 run: six processed comments were incorrectly reported as unconfirmed. The run was paused and stopped at six processed, leaving 294 untouched targets stopped. A captured deletion returned HTTP 200 and an empty JSON object; the exact-target verification returned author [deleted] and body [removed]. A fresh comment page independently showed the first failed target as deleted. The old verifier deliberately rejected that combination, causing six repeated reads per item. A later response exhausted the request allowance; the next identity read returned HTTP 429 with x-ratelimit-reset but no Retry-After. These observed shapes drive the RC6 regressions.
 
-## Distribution
+This diagnosis establishes that the observed deletion succeeded while the RC5 result was wrong. RC6 installed-script acceptance is tracked below and must not be inferred from the fixtures.
+
+## Prior RC5 distribution
 
 Implementation [c596861](https://github.com/slaveofsolace/Reddit-Toolbox/commit/c596861b6dd39dedbe85e457d34e8dfafd3e329d) is on main. [CI](https://github.com/slaveofsolace/Reddit-Toolbox/actions/runs/33979102549) and [Build userscript](https://github.com/slaveofsolace/Reddit-Toolbox/actions/runs/33979102633) passed. The public install file and checksum matched the local 145,407-byte artifact on 2026-09-05: SHA-256 `f90913edeb181cfc26f7a774bd6793e70e5865739052c32930c067c8451246fd`.
 

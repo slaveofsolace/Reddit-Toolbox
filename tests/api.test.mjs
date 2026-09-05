@@ -128,6 +128,26 @@ test('HTTP 429 becomes a RateLimitError with Retry-After', async () => {
   });
 });
 
+test('Reddit reset headers gate further requests after the last successful allowance', async () => {
+  let now = 1000;
+  let calls = 0;
+  const client = new Reddit.RedditSessionClient({ now: () => now, fetchImpl: async () => {
+    calls++;
+    return jsonResponse({}, { headers: { 'x-ratelimit-remaining': '0.0', 'x-ratelimit-reset': '12' } });
+  }});
+  await client.getJson('/api/info.json');
+  await assert.rejects(client.getJson('/api/info.json'), error => error.code === 'RATE_LIMITED' && error.retryAfterMs === 13000);
+  assert.equal(calls, 1);
+  now += 13001;
+  await client.getJson('/api/info.json');
+  assert.equal(calls, 2);
+});
+
+test('HTTP 429 uses Reddit reset seconds when Retry-After is absent', async () => {
+  const client = new Reddit.RedditSessionClient({ fetchImpl: async () => jsonResponse({}, { status: 429, headers: { 'x-ratelimit-reset': '507' } }) });
+  await assert.rejects(client.getJson('/api/me.json'), error => error.code === 'RATE_LIMITED' && error.retryAfterMs === 508000);
+});
+
 test('API error arrays are surfaced and do not look successful', async () => {
   const client = new Reddit.RedditSessionClient({
     origin: 'https://www.reddit.com',

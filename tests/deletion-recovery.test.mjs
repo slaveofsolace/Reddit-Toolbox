@@ -110,3 +110,23 @@ test('HTTP 200 rejection envelopes are not accepted as successful mutations', as
     await assert.rejects(client.delete('t1_target'),{code});
   }
 });
+
+test('accepted owned-comment deletion confirms the live deleted-author/removed-body response', async () => {
+  const f = setup({ status: () => ({ status: 'present', authorDeleted: true, owned: false, text: '[removed]' }) });
+  assert.equal((await f.service.remove(f.item)).deleted, true);
+  assert.equal(f.reads(), 1);
+  assert.equal(f.sent(), 1);
+  assert.equal(f.service.stateFor(f.item.fullname).deletionEvidence, 'accepted-and-author-deleted');
+});
+
+test('a removed body still does not confirm an active author, unacknowledged request, or unverified ownership', async () => {
+  for (const variant of ['author', 'lost', 'ownership']) {
+    const f = setup({ lost: variant === 'lost', status: () => ({ status: 'present', authorDeleted: variant !== 'author', owned: false, text: '[removed]' }) });
+    if (variant === 'ownership') {
+      const state = f.service.stateFor(f.item.fullname);
+      state.deleteSent = true; state.deleteAcknowledged = true;
+    }
+    await assert.rejects(f.service.remove(f.item), { code: 'DELETE_RESULT_UNCERTAIN' });
+    assert.equal(f.sent(), variant === 'ownership' ? 0 : 1);
+  }
+});

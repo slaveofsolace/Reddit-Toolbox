@@ -21,6 +21,8 @@
       this.username = '';
       this.logLines = [];
       this.busy = false;
+      this.rechecking = false;
+      this.recheckCancelled = false;
       this.previewPage = 0;
       this.completionResetTimer = null;
       this.previewRebuildTimer = null;
@@ -53,6 +55,7 @@
       this.window = new UI.ToolboxWindow(this);
       this.bindEvents();
       this.updateDateFields();
+      this.updateLimitFields();
       this.refreshControls();
       this.setLauncherState('idle');
       globalThis.addEventListener?.('beforeunload', this.beforeUnloadHandler);
@@ -68,7 +71,7 @@
         previewNavigation: $('.preview-navigation'), previewPrevious: $('.preview-previous'), previewNext: $('.preview-next'), previewPage: $('.preview-page'),
         includeComments: $('#include-comments'), includePosts: $('#include-posts'),
         dateMode: $('#date-mode'), fromDate: $('#from-date'), throughDate: $('#through-date'),
-        fromField: $('.from-field'), throughField: $('.through-field'), maxItems: $('#max-items'),
+        fromField: $('.from-field'), throughField: $('.through-field'), maxItems: $('#max-items'), limitMode: $('#limit-mode'), amountField: $('.amount-field'),
         sortOrder: $('#sort-order'), keepSubreddits: $('#keep-subreddits'), keepScore: $('#keep-score'),
         textIncludes: $('#text-includes'), deleteUneditable: $('#delete-uneditable'),
         minimumDelay: $('#minimum-delay'), maximumDelay: $('#maximum-delay'),
@@ -98,6 +101,7 @@
         if (event.key === 'Escape' && this.refs.panel.classList.contains('open')) this.close();
       });
       this.refs.dateMode.addEventListener('change', () => this.updateDateFields());
+      this.refs.limitMode.addEventListener('change', () => this.updateLimitFields());
       this.refs.scan.addEventListener('click', () => this.scanProfile());
       this.refs.importButton.addEventListener('click', () => this.refs.archiveInput.click());
       this.refs.archiveInput.addEventListener('change', (event) => this.importArchive(event.target.files));
@@ -150,7 +154,8 @@
       this.refs.dateMode.value = settings.dateMode;
       this.refs.fromDate.value = settings.fromDate;
       this.refs.throughDate.value = settings.throughDate;
-      this.refs.maxItems.value = settings.maxItems || '';
+      this.refs.limitMode.value = settings.maxItems > 0 ? 'count' : 'all';
+      this.refs.maxItems.value = settings.maxItems || '100';
       this.refs.sortOrder.value = settings.sortOrder;
       this.refs.keepSubreddits.value = settings.keepSubreddits;
       this.refs.keepScore.value = settings.keepScoreAtOrAbove;
@@ -172,7 +177,7 @@
         dateMode: this.refs.dateMode.value,
         fromDate: this.refs.fromDate.value,
         throughDate: this.refs.throughDate.value,
-        maxItems: Math.max(0, Number(this.refs.maxItems.value) || 0),
+        maxItems: this.refs.limitMode.value === 'all' ? 0 : Math.max(1, Math.min(100_000, Math.trunc(Number(this.refs.maxItems.value) || 1))),
         sortOrder: this.refs.sortOrder.value,
         keepSubreddits: this.refs.keepSubreddits.value,
         keepScoreAtOrAbove: this.refs.keepScore.value,
@@ -191,6 +196,10 @@
       const mode = this.refs.dateMode.value;
       this.refs.fromField.classList.toggle('hidden', !['after', 'between'].includes(mode));
       this.refs.throughField.classList.toggle('hidden', !['before', 'between'].includes(mode));
+    }
+
+    updateLimitFields() {
+      this.refs.amountField.hidden = this.refs.limitMode.value === 'all';
     }
 
     allItems() {

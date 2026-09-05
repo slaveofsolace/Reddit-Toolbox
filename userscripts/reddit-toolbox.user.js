@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Toolbox
 // @namespace    https://github.com/slaveofsolace
-// @version      1.0.0-rc.5
+// @version      1.0.0-rc.6
 // @description  Automatically overwrite and delete selected Reddit posts and comments in one reviewed batch.
 // @author       slaveofsolace
 // @license      MIT
@@ -27,13 +27,13 @@
 
   const family = globalThis.ToolboxFamily || {};
   family.Core ||= {};
-  family.version = '1.0.0-rc.5';
+  family.version = '1.0.0-rc.6';
 
   const toolbox = globalThis.RedditToolbox || {};
   toolbox.Core = family.Core;
   toolbox.Reddit ||= {};
   toolbox.UI ||= {};
-  toolbox.version = '1.0.0-rc.5';
+  toolbox.version = '1.0.0-rc.6';
 
   globalThis.ToolboxFamily = family;
   globalThis.RedditToolbox = toolbox;
@@ -1128,7 +1128,10 @@
 
   function retryAfterMilliseconds(response, fallback = 60_000) {
     const header = response?.headers?.get?.('retry-after');
-    if (!header) return fallback;
+    if (!header) {
+      const reset = Number(response?.headers?.get?.('x-ratelimit-reset'));
+      return Number.isFinite(reset) && reset > 0 ? Math.ceil(reset * 1_000) + 1_000 : fallback;
+    }
     const seconds = Number(header);
     if (Number.isFinite(seconds)) return Math.max(1_000, seconds * 1_000);
     const date = new Date(header).getTime();
@@ -1165,6 +1168,8 @@
       this.origin = options.origin || globalThis.location?.origin || 'https://www.reddit.com';
       this.modhash = options.modhash || '';
       this.username = options.username || '';
+      this.rateLimitUntil = 0;
+      this.now = options.now || Date.now;
       this.requestTimeoutMs = Math.max(100, Math.min(60_000, Number(options.requestTimeoutMs) || 30_000));
       if (typeof this.fetch !== 'function') throw new Error('Fetch is unavailable.');
     }
@@ -1180,6 +1185,10 @@
 
     async readResponse(response) {
       const contentType = response.headers?.get?.('content-type') || '';
+      const remaining = response.headers?.get?.('x-ratelimit-remaining');
+      if (response.status === 429 || (remaining !== null && remaining !== undefined && remaining !== '' && Number(remaining) <= 0)) {
+        this.rateLimitUntil = Math.max(this.rateLimitUntil, this.now() + retryAfterMilliseconds(response));
+      }
       // Interpret definite HTTP rejection before attempting to read a possibly broken body.
       if (response.status === 429) throw new Core.RateLimitError('Reddit asked the tool to slow down.', retryAfterMilliseconds(response));
       if (response.status === 401) throw new Core.AuthError('Your Reddit session expired. Sign in again, then resume.', { status: 401 });
@@ -1245,6 +1254,9 @@
 
     async request(path, init) {
       const url = this.url(path);
+      if (this.rateLimitUntil > this.now()) {
+        throw new Core.RateLimitError('Waiting for Reddit’s request allowance to reset.', this.rateLimitUntil - this.now());
+      }
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
       try {
@@ -1401,6 +1413,7 @@
         || (deletedAuthor && ['', '[deleted]'].includes(text.trim().toLowerCase()));
       return {
         status: deleted ? 'deleted' : 'present',
+        authorDeleted: deletedAuthor,
         owned: Boolean(this.username && sameUsername(data.author, this.username)),
         editable: child.kind === 't1' || data.is_self === true,
         text
@@ -1628,10 +1641,18 @@
           : { status: await this.client.isDeleted(item.fullname) ? 'deleted' : 'unknown' };
         missingReads = last.status === 'missing' ? missingReads + 1 : 0;
         presentReads = last.status === 'present' && last.owned ? presentReads + 1 : 0;
+        // Live Reddit can preserve the moderation placeholder after an owner
+        // deletes a comment. Require our accepted delete and prior ownership;
+        // [removed] alone (or an active author) is never enough.
+        const deletedRemovedComment = item.kind === 'comment'
+          && last.authorDeleted === true && last.text?.trim().toLowerCase() === '[removed]'
+          && state.deleteAcknowledged && state.ownershipVerified;
         if (last.status === 'deleted'
+          || deletedRemovedComment
           || (missingReads >= 2 && state.deleteAcknowledged && state.ownershipVerified)) {
           state.completed = true;
-          state.deletionEvidence = last.status === 'deleted' ? 'deleted-marker' : 'accepted-and-no-longer-returned';
+          state.deletionEvidence = last.status === 'deleted' ? 'deleted-marker'
+            : deletedRemovedComment ? 'accepted-and-author-deleted' : 'accepted-and-no-longer-returned';
           return true;
         }
         if (context.isStopRequested?.()) break;
@@ -2190,7 +2211,7 @@
     <aside class="panel" id="rt-panel" role="dialog" aria-label="Reddit Toolbox" aria-modal="false">
       <header class="header">
         <button class="icon-button move-window" type="button" aria-label="Move window" title="Drag to move. Arrow keys move; Shift moves farther.">⠿</button>
-        <div class="brand"><strong>Reddit Toolbox</strong><span>Your Reddit history <small>RC5</small></span></div>
+        <div class="brand"><strong>Reddit Toolbox</strong><span>Your Reddit history <small>RC6</small></span></div>
         <button class="icon-button reset-window" type="button" aria-label="Reset window layout" title="Reset size and position">↺</button>
         <button class="icon-button close" type="button" aria-label="Close">✕</button>
       </header>
@@ -2203,7 +2224,7 @@
             <div class="field full"><label for="date-mode">Date range</label><select id="date-mode"><option value="all">All time</option><option value="before">Before a date</option><option value="after">After a date</option><option value="between">Between dates</option></select></div>
             <div class="field from-field"><label for="from-date">From</label><input id="from-date" type="date"></div>
             <div class="field through-field"><label for="through-date">Through</label><input id="through-date" type="date"></div>
-            <div class="field"><label for="max-items">Limit</label><input id="max-items" type="number" min="0" max="100000" step="1" inputmode="numeric" placeholder="All matching items"></div>
+            <div class="field"><label for="limit-mode">Limit</label><select id="limit-mode"><option value="all">No limit</option><option value="count">Set a limit</option></select><div class="field amount-field" hidden><label for="max-items">Number of items</label><input id="max-items" type="number" min="1" max="100000" step="1" inputmode="numeric" value="100"></div></div>
             <div class="field"><label for="sort-order">Order</label><select id="sort-order"><option value="oldest">Oldest first</option><option value="newest">Newest first</option></select></div>
           </div>
           <details class="advanced"><summary>More options</summary>
@@ -2436,6 +2457,8 @@
       this.username = '';
       this.logLines = [];
       this.busy = false;
+      this.rechecking = false;
+      this.recheckCancelled = false;
       this.previewPage = 0;
       this.completionResetTimer = null;
       this.previewRebuildTimer = null;
@@ -2468,6 +2491,7 @@
       this.window = new UI.ToolboxWindow(this);
       this.bindEvents();
       this.updateDateFields();
+      this.updateLimitFields();
       this.refreshControls();
       this.setLauncherState('idle');
       globalThis.addEventListener?.('beforeunload', this.beforeUnloadHandler);
@@ -2483,7 +2507,7 @@
         previewNavigation: $('.preview-navigation'), previewPrevious: $('.preview-previous'), previewNext: $('.preview-next'), previewPage: $('.preview-page'),
         includeComments: $('#include-comments'), includePosts: $('#include-posts'),
         dateMode: $('#date-mode'), fromDate: $('#from-date'), throughDate: $('#through-date'),
-        fromField: $('.from-field'), throughField: $('.through-field'), maxItems: $('#max-items'),
+        fromField: $('.from-field'), throughField: $('.through-field'), maxItems: $('#max-items'), limitMode: $('#limit-mode'), amountField: $('.amount-field'),
         sortOrder: $('#sort-order'), keepSubreddits: $('#keep-subreddits'), keepScore: $('#keep-score'),
         textIncludes: $('#text-includes'), deleteUneditable: $('#delete-uneditable'),
         minimumDelay: $('#minimum-delay'), maximumDelay: $('#maximum-delay'),
@@ -2513,6 +2537,7 @@
         if (event.key === 'Escape' && this.refs.panel.classList.contains('open')) this.close();
       });
       this.refs.dateMode.addEventListener('change', () => this.updateDateFields());
+      this.refs.limitMode.addEventListener('change', () => this.updateLimitFields());
       this.refs.scan.addEventListener('click', () => this.scanProfile());
       this.refs.importButton.addEventListener('click', () => this.refs.archiveInput.click());
       this.refs.archiveInput.addEventListener('change', (event) => this.importArchive(event.target.files));
@@ -2565,7 +2590,8 @@
       this.refs.dateMode.value = settings.dateMode;
       this.refs.fromDate.value = settings.fromDate;
       this.refs.throughDate.value = settings.throughDate;
-      this.refs.maxItems.value = settings.maxItems || '';
+      this.refs.limitMode.value = settings.maxItems > 0 ? 'count' : 'all';
+      this.refs.maxItems.value = settings.maxItems || '100';
       this.refs.sortOrder.value = settings.sortOrder;
       this.refs.keepSubreddits.value = settings.keepSubreddits;
       this.refs.keepScore.value = settings.keepScoreAtOrAbove;
@@ -2587,7 +2613,7 @@
         dateMode: this.refs.dateMode.value,
         fromDate: this.refs.fromDate.value,
         throughDate: this.refs.throughDate.value,
-        maxItems: Math.max(0, Number(this.refs.maxItems.value) || 0),
+        maxItems: this.refs.limitMode.value === 'all' ? 0 : Math.max(1, Math.min(100_000, Math.trunc(Number(this.refs.maxItems.value) || 1))),
         sortOrder: this.refs.sortOrder.value,
         keepSubreddits: this.refs.keepSubreddits.value,
         keepScoreAtOrAbove: this.refs.keepScore.value,
@@ -2606,6 +2632,10 @@
       const mode = this.refs.dateMode.value;
       this.refs.fromField.classList.toggle('hidden', !['after', 'between'].includes(mode));
       this.refs.throughField.classList.toggle('hidden', !['before', 'between'].includes(mode));
+    }
+
+    updateLimitFields() {
+      this.refs.amountField.hidden = this.refs.limitMode.value === 'all';
     }
 
     allItems() {
@@ -3029,7 +3059,9 @@
       this.refs.start.hidden = !this.plan || Boolean(this.plan.startedAt);
       this.refs.start.textContent = this.plan?.options.accountId ? `Delete ${summary.ready} ${summary.ready === 1 ? 'item' : 'items'}` : 'Sign in to delete';
       this.refs.pause.hidden = !active;
-      this.refs.stop.hidden = !active;
+      this.refs.stop.hidden = !active && !this.rechecking;
+      this.refs.stop.textContent = this.rechecking ? 'Cancel recheck' : 'Stop';
+      this.refs.stop.title = this.rechecking ? 'Cancel read-only verification' : 'Finish the current item, then stop';
       this.refs.retry.hidden = active || !(summary.failed || summary.stopped);
       this.refs.recheck.hidden = active || !summary.unconfirmed;
       this.refs.recheck.disabled = locked;
@@ -3042,7 +3074,7 @@
       this.refs.deleteNote.hidden = !this.plan?.options.accountId || Boolean(this.plan.startedAt);
       this.refs.scan.textContent = this.busy && !active ? 'Working…' : this.profileItems.length ? 'Refresh history' : 'Find matching items';
       this.refs.pause.disabled = !active || this.runner?.state === 'stopping';
-      this.refs.stop.disabled = !active || this.runner?.state === 'stopping';
+      this.refs.stop.disabled = this.rechecking ? this.recheckCancelled : !active || this.runner?.state === 'stopping';
       this.refs.retry.disabled = locked || !(summary.failed || summary.stopped);
       this.refs.pause.textContent = this.runner?.state === 'paused' ? 'Resume' : 'Pause';
       this.refs.checkLogin.disabled = locked;
@@ -3174,6 +3206,7 @@
           break;
         case 'wait-started':
         case 'wait-tick': {
+          if (event.state === 'paused') break;
           const prefix = event.waitReason === 'rate-limit'
             ? 'Rate limited · continuing automatically in'
             : event.waitReason === 'retry'
@@ -3255,8 +3288,8 @@
       this.setStatus(this.refs.runStatus, 'Verifying the Reddit session before starting…');
       try {
         const client = this.ensureClient();
-        const session = await client.assertSession(this.plan.options.accountId, true);
-        this.showAccount(session.username);
+        // The worker validates the account before every mutation. Keeping that
+        // validation inside the runner also gives it automatic rate-limit waits.
         const serviceKey = this.plan.options.accountId;
         let service = this.removalServices.get(serviceKey);
         if (!service || service.client !== client) {
@@ -3284,7 +3317,7 @@
         const summary = Core.planSummary(this.plan);
         this.renderCounts();
         const message = summary.stopped
-          ? `${summary.completed} deleted; ${summary.stopped} remaining items stopped.`
+          ? `${summary.completed} deleted; ${summary.unconfirmed} need recheck; ${summary.stopped} remaining items stopped.`
           : summary.unconfirmed
             ? `${summary.completed} deleted; ${summary.unconfirmed} need recheck; ${summary.failed} failed. Cleanup finished.`
           : summary.failed
@@ -3308,14 +3341,7 @@
     async togglePause() {
       if (!this.runner) return;
       if (this.runner.state === 'paused') {
-        this.setStatus(this.refs.runStatus, 'Refreshing the Reddit session before resuming…');
-        try {
-          await this.ensureClient().assertSession(this.plan.options.accountId, true);
-          this.runner.resume();
-        } catch (error) {
-          this.setStatus(this.refs.runStatus, UI.compactError(error), 'error');
-          this.log(`Resume blocked: ${UI.compactError(error)}`);
-        }
+        this.runner.resume();
       } else {
         this.runner.pause();
       }
@@ -3323,6 +3349,12 @@
     }
 
     stopRun() {
+      if (this.rechecking) {
+        this.recheckCancelled = true;
+        this.refs.currentAction.textContent = 'Cancelling the recheck…';
+        this.refreshControls();
+        return;
+      }
       this.runner?.stop();
       this.refreshControls();
     }
@@ -3346,28 +3378,56 @@
     async recheckResults() {
       if (this.busy || !this.plan || !this.removalService) return;
       this.busy = true;
+      this.rechecking = true;
+      this.recheckCancelled = false;
       this.refreshControls();
       try {
         const service = this.removalService;
-        for (const row of this.plan.items.filter(item => item.status === 'unconfirmed')) {
-          try {
-            await service.verifyDeleted(row.content, service.stateFor(row.content.fullname), {}, false);
-            row.status = 'completed';
-            row.phase = 'completed';
-            row.error = null;
-            row.outcome = { status: 'completed', reason: 'deletion-confirmed', deleted: true };
-          } catch (error) { row.error = { code: error.code, message: UI.compactError(error) }; }
+        const rows = this.plan.items.filter(item => item.status === 'unconfirmed');
+        for (const [index, row] of rows.entries()) {
+          if (this.recheckCancelled) break;
+          while (!this.recheckCancelled) {
+            this.refs.currentAction.textContent = `Rechecking result ${index + 1}/${rows.length} · read only`;
+            try {
+              await service.verifyDeleted(row.content, service.stateFor(row.content.fullname), {
+                isStopRequested: () => this.recheckCancelled
+              }, false);
+              row.status = 'completed';
+              row.phase = 'completed';
+              row.error = null;
+              row.outcome = { status: 'completed', reason: 'deletion-confirmed', deleted: true };
+              break;
+            } catch (error) {
+              if (error?.code === 'RATE_LIMITED') {
+                const until = Date.now() + Math.max(1_000, Number(error.retryAfterMs) || 60_000);
+                while (!this.recheckCancelled && Date.now() < until) {
+                  this.refs.currentAction.textContent = `Reddit cooldown · recheck continues in ${secondsLabel(until - Date.now())}`;
+                  await Core.wait(Math.min(1_000, until - Date.now()));
+                }
+                continue;
+              }
+              row.error = { code: error.code, message: UI.compactError(error) };
+              if (error?.pauseRequired) {
+                this.recheckCancelled = true;
+                this.log(`Recheck stopped: ${UI.compactError(error)}`);
+              }
+              break;
+            }
+          }
           this.updateQueueRow(row);
+          this.updateBatchMetrics({ summary: Core.planSummary(this.plan) });
         }
         const summary = Core.planSummary(this.plan);
         if (this.runner) this.runner.summary = { ...summary };
-        this.plan.status = summary.failed || summary.unconfirmed ? 'completed-with-failures' : 'completed';
+        this.plan.status = summary.stopped ? 'stopped' : summary.failed || summary.unconfirmed ? 'completed-with-failures' : 'completed';
         if (this.runner) this.runner.state = this.plan.status;
         this.updateBatchMetrics({ summary });
         this.renderCounts();
-        this.setStatus(this.refs.runStatus, summary.completed + ' deleted; ' + summary.unconfirmed + ' still need recheck. No deletion requests were resent.', summary.unconfirmed ? 'error' : 'success');
+        this.refs.currentAction.textContent = this.recheckCancelled ? 'Recheck stopped.' : 'Recheck complete.';
+        this.setStatus(this.refs.runStatus, `${summary.completed} deleted; ${summary.unconfirmed} need recheck${summary.stopped ? `; ${summary.stopped} remaining items stopped` : ''}.`, summary.unconfirmed || summary.failed ? 'error' : 'success');
         this.setLauncherState(this.plan.status, summary);
       } finally {
+        this.rechecking = false;
         this.busy = false;
         this.refreshControls();
       }

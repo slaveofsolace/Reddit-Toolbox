@@ -80,7 +80,7 @@ The removal service retains per-account, per-fullname mutation state for the lif
 
 ## Recovery behavior
 
-- Reddit rate limits cause an automatic wait for the supplied retry interval, then the same item resumes.
+- Reddit rate limits cause an automatic wait for Retry-After, otherwise x-ratelimit-reset plus a small boundary margin, then the same item resumes. Successful responses reporting zero remaining allowance gate later requests locally until the reset. Identity checks for batch start/resume stay inside the runner so they share this recovery path.
 - Retryable transport or server failures use bounded automatic backoff.
 - An isolated permanent item failure is recorded and the next item starts automatically.
 - Five consecutive failures pause the batch for operator review.
@@ -110,7 +110,7 @@ isDeleted(fullname)                strict deleted-marker convenience check
 
 A lost response, malformed response, or HTTP 5xx after an edit or delete is ambiguous. After an edit, the service reads back the original replacement. If that cannot be verified, it pauses without resending. After a delete, it records that the request may have been sent and verifies the final state. A lost deletion response is never automatically resent.
 
-Deletion verification uses up to six reads with increasing delays. An explicit deleted author/text pair (including a null author) or Reddit's deleted category establishes a deleted marker. Moderation removal does not. Alternatively, a successfully acknowledged deletion of a target whose ownership was verified can be confirmed by two consecutive valid exact-target listings that no longer return it. Missing data without that prior acknowledgement and ownership evidence, malformed responses, and mismatched IDs do not establish deletion.
+Deletion verification uses up to six reads with increasing delays. An explicit deleted author/text pair (including a null author) or Reddit's deleted category establishes a deleted marker. Moderation removal alone does not. Live Reddit also returns [deleted] as author with [removed] as body after deletion of an already removed comment. The service accepts that specific transition only for comments with previously verified ownership and an acknowledged delete; bare adapter reads remain conservative. Alternatively, a successfully acknowledged deletion of a target whose ownership was verified can be confirmed by two consecutive valid exact-target listings that no longer return it. Missing data without that prior acknowledgement and ownership evidence, malformed responses, and mismatched IDs do not establish deletion.
 
 Reddit can acknowledge a no-op. If repeated reads still show the same owned target with the exact saved replacement, the service revalidates the account, ownership, editability, and replacement at the mutation boundary, then retries deletion once. Uncertain requests do not qualify for this retry.
 
@@ -118,7 +118,7 @@ Unresolved results become terminal `unconfirmed` queue rows, counted as processe
 
 ## Window and review
 
-The scan and archive import produce a review automatically. Filter changes invalidate the old review immediately and rebuild it after a short debounce. The Delete button is the single explicit batch authorization; targets and account binding remain validated and frozen. Window and launcher pointer controls, keyboard controls, viewport clamping, and preference-only geometry storage live in `src/ui/window.js`.
+The scan and archive import produce a review automatically. The Limit selector explicitly offers No limit (all discovered matches) or Set a limit (a positive number). Filter changes invalidate the old review immediately and rebuild it after a short debounce. The Delete button is the single explicit batch authorization; targets and account binding remain validated and frozen. Window and launcher pointer controls, keyboard controls, viewport clamping, and preference-only geometry storage live in `src/ui/window.js`.
 
 ## Build
 
