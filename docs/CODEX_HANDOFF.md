@@ -20,8 +20,8 @@ Build with npm ci and npm run check. Generated script, metadata/package/lockfile
 
 Implementation e931e72 is committed and pushed to main. Both main workflows passed; the served userscript and checksum match the tested RC4 artifact. Local Node and Chromium/Firefox fixture evidence is recorded in the release checklist.
 
-RC3 was observed installed in the owner's existing Chrome Reddit tab on 2026-09-05. Opening the public RC4 userscript URL reached Tampermonkey's installation bridge, but no Update control was exposed by the browser tool. Reload still showed RC3. The owner was asked to complete the ordinary update, then reply “updated” to continue live testing. No live scan, edit, or deletion was performed in this correction.
+The owner completed the RC4 update and renewed authorization for installs, updates, and live testing on 2026-09-05. The live Chrome tab showed RC4. Scan history succeeded against the existing login with no OAuth or key. A two-comment batch is prepared and Run is enabled; a single action-time confirmation was requested because the browser tool requires it for irreversible deletion even when preapproved. No live edit or deletion has occurred yet. Keep the tab and reviewed plan intact while awaiting that answer.
 
-Do not treat the earlier rejection of the Chrome extension-manager URL as evidence that no script is installed. That rejected manager action must not be retried or bypassed. After the owner updates, reload the existing tab, verify the RC4 label, then use Scan history directly; do not request a client ID.
+Do not treat the earlier rejection of the Chrome extension-manager URL as evidence that no script is installed. That rejected manager action must not be retried or bypassed. Do not request a client ID. Once the exact prepared batch is confirmed, use its Run entire batch control and observe the script’s own overwrite/read-back/delete/advance flow.
 
 Session requests are an unofficial website integration and require actual live compatibility checks. Synthetic tests do not prove current Reddit response behavior. No stable release or perfected live cleanup is claimed before those checks.
