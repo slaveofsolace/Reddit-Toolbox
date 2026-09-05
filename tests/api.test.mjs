@@ -20,6 +20,36 @@ test('getSession reads username and modhash without storing credentials', async 
   assert.deepEqual({ ...session }, { username: 'sam', modhash: 'abc' });
 });
 
+test('session reads use the current page login without OAuth or a client key', async () => {
+  let request;
+  const client = new Reddit.RedditSessionClient({
+    origin: 'https://www.reddit.com',
+    fetchImpl: async (url, init) => {
+      request = { url, init };
+      return jsonResponse({ data: { name: 'sam', modhash: 'session-action-token' } });
+    }
+  });
+  await client.assertSession('SAM');
+  assert.equal(String(request.url), 'https://www.reddit.com/api/me.json?raw_json=1');
+  assert.equal(request.init.credentials, 'include');
+  assert.equal(request.init.redirect, 'error');
+  assert.equal(request.init.cache, 'no-store');
+  assert.equal(request.init.headers?.Authorization, undefined);
+});
+
+test('logout or a rejected identity read clears the previous action credentials', async () => {
+  for (const failure of [jsonResponse({ data: {} }), jsonResponse({}, { status: 401 }), jsonResponse({}, { status: 403 })]) {
+    let response = jsonResponse({ data: { name: 'sam', modhash: 'previous-session' } });
+    const client = new Reddit.RedditSessionClient({ origin: 'https://www.reddit.com', fetchImpl: async () => response });
+    await client.getSession(true);
+    response = failure;
+    await assert.rejects(client.getSession(true));
+    assert.equal(client.modhash, '');
+    assert.equal(client.username, '');
+    await assert.rejects(client.delete('t1_test'), error => error instanceof Core.AuthError);
+  }
+});
+
 
 test('getSession can scan without a modhash but requires one for actions', async () => {
   const client = new Reddit.RedditSessionClient({

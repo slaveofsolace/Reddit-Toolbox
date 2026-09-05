@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.0-rc.4 — 2026-09-05
+
+- Make the existing Reddit browser session the default and only production connection. Scan and run without app registration, OAuth, a client ID, or an API key.
+- Remove the OAuth adapter, popup, token exchange, client settings, and cross-origin userscript network grants. Remove obsolete saved client IDs during upgrade.
+- Add optional login status and clear-history controls. Invalidate review on failed login checks and require fresh history when the account changes.
+- Clear cached session action credentials when identity refresh fails; retain account binding, ownership checks, overwrite/read-back/delete verification, Web Locks, pacing, and uncertainty handling.
+- Preserve local signed-out archive review and all RC3 selection improvements. Refresh installation and privacy documentation around the session-first flow.
+
 ## 1.0.0-rc.3 — 2026-09-05
 
 Development candidate; authenticated Reddit and Tampermonkey acceptance remain pending.

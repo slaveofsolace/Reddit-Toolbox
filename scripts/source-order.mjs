@@ -9,7 +9,6 @@ export const sourceOrder = [
   'src/core/storage.js',
   'src/reddit/model.js',
   'src/reddit/api.js',
-  'src/reddit/oauth.js',
   'src/reddit/scanner.js',
   'src/reddit/removal-service.js',
   'src/ui/styles.js',

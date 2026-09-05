@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Toolbox
 // @namespace    https://github.com/slaveofsolace
-// @version      1.0.0-rc.3
+// @version      1.0.0-rc.4
 // @description  Automatically overwrite and delete selected Reddit posts and comments in one reviewed batch.
 // @author       slaveofsolace
 // @license      MIT
@@ -9,15 +9,12 @@
 // @match        https://old.reddit.com/*
 // @match        https://new.reddit.com/*
 // @match        https://sh.reddit.com/*
-// @run-at       document-start
+// @run-at       document-idle
 // @noframes
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_deleteValue
 // @grant        GM_registerMenuCommand
-// @grant        GM_xmlhttpRequest
-// @connect      www.reddit.com
-// @connect      oauth.reddit.com
 // @homepageURL  https://github.com/slaveofsolace/Reddit-Toolbox
 // @supportURL   https://github.com/slaveofsolace/Reddit-Toolbox/issues
 // @downloadURL  https://raw.githubusercontent.com/slaveofsolace/Reddit-Toolbox/main/userscripts/reddit-toolbox.user.js
@@ -30,13 +27,13 @@
 
   const family = globalThis.ToolboxFamily || {};
   family.Core ||= {};
-  family.version = '1.0.0-rc.3';
+  family.version = '1.0.0-rc.4';
 
   const toolbox = globalThis.RedditToolbox || {};
   toolbox.Core = family.Core;
   toolbox.Reddit ||= {};
   toolbox.UI ||= {};
-  toolbox.version = '1.0.0-rc.3';
+  toolbox.version = '1.0.0-rc.4';
 
   globalThis.ToolboxFamily = family;
   globalThis.RedditToolbox = toolbox;
@@ -1273,6 +1270,9 @@
     }
 
     async getSession(requireModhash = false) {
+      // Never retain action credentials after a failed session refresh.
+      this.username = '';
+      this.modhash = '';
       const payload = await this.getJson('/api/me.json?raw_json=1');
       const data = payload?.data;
       if (!data?.name) throw new Core.AuthError();
@@ -1280,7 +1280,7 @@
       this.modhash = String(data.modhash || '');
       if (requireModhash && !this.modhash) {
         throw new Core.AuthError(
-          'The provisional session adapter did not receive an action token. Live access requires approved OAuth setup.',
+          'Reddit did not provide its session action token. Refresh the page and sign in again before cleanup.',
           { code: 'MODHASH_MISSING' }
         );
       }
@@ -1392,264 +1392,6 @@
   Reddit.apiErrors = apiErrors;
   Reddit.sameUsername = sameUsername;
   Reddit.RedditSessionClient = RedditSessionClient;
-})();
-
-/* src/reddit/oauth.js */
-(() => {
-  'use strict';
-
-  const { Core, Reddit } = globalThis.RedditToolbox;
-  const SITE = 'https://www.reddit.com';
-  const API = 'https://oauth.reddit.com';
-  const REDIRECT = `${SITE}/?reddit-toolbox=oauth-callback`;
-  const SCOPES = ['identity', 'history', 'read', 'edit'];
-  const CALLBACK_TYPE = 'reddit-toolbox:oauth-code';
-
-  function assertCanonicalOrigin(origin = globalThis.location?.origin) {
-    if (origin !== SITE) throw new Core.AuthError('Open www.reddit.com to connect and run cleanup.', { code: 'CANONICAL_ORIGIN_REQUIRED' });
-  }
-
-  function clientId(value) {
-    const id = String(value || '').trim();
-    if (!/^[a-zA-Z0-9_-]{8,80}$/.test(id)) throw new Core.AuthError('Enter the public client ID of your approved Reddit installed app.', { code: 'OAUTH_CLIENT_REQUIRED' });
-    return id;
-  }
-
-  function authorizationUrl(id, state) {
-    const url = new URL('/api/v1/authorize', SITE);
-    url.search = new URLSearchParams({ client_id: clientId(id), response_type: 'code', state,
-      redirect_uri: REDIRECT, duration: 'permanent', scope: SCOPES.join(' ') }).toString();
-    return url.href;
-  }
-
-  // The popup returns only a one-use authorization code. Tokens never enter a URL,
-  // page storage, GM storage, a backup, or the page-facing app object.
-  function receiveOAuthCallback() {
-    if (typeof location === 'undefined') return false;
-    const url = new URL(location.href);
-    if (url.origin !== SITE || url.pathname !== '/' || url.searchParams.get('reddit-toolbox') !== 'oauth-callback') return false;
-    const code = url.searchParams.get('code');
-    const state = url.searchParams.get('state');
-    const error = url.searchParams.has('error');
-    globalThis.history?.replaceState(null, '', `${SITE}/?reddit-toolbox=connection-return`);
-    if (globalThis.opener && /^[a-z]{64}$/.test(state || '')) {
-      globalThis.opener.postMessage({ type: CALLBACK_TYPE, state, code: error ? null : code, denied: error }, SITE);
-    }
-    const show = () => {
-      const message = document.createElement('p');
-      message.textContent = 'Reddit Toolbox: return to the original tab to finish connecting. You can close this tab.';
-      message.style.cssText = 'padding:24px;font:16px system-ui';
-      document.body.replaceChildren(message);
-    };
-    if (document.body) show(); else document.addEventListener('DOMContentLoaded', show, { once: true });
-    return true;
-  }
-
-  function requestAuthorization(id, host = globalThis) {
-    assertCanonicalOrigin(host.location?.origin);
-    const state = Core.randomLetterString(64);
-    const url = authorizationUrl(id, state);
-    return new Promise((resolve, reject) => {
-      let popup;
-      let timer;
-      const cleanup = () => { host.removeEventListener('message', onMessage); clearTimeout(timer); };
-      const onMessage = (event) => {
-        if (event.origin !== SITE || event.source !== popup || event.data?.type !== CALLBACK_TYPE || event.data.state !== state) return;
-        cleanup();
-        popup?.close();
-        if (event.data.denied || typeof event.data.code !== 'string' || !event.data.code || event.data.code.length > 4096) {
-          reject(new Core.AuthError('Reddit authorization was declined. No cleanup started.', { code: 'OAUTH_DENIED' }));
-        } else resolve(event.data.code);
-      };
-      host.addEventListener('message', onMessage);
-      popup = host.open(url, '_blank', 'popup,width=720,height=780');
-      if (!popup) {
-        cleanup();
-        reject(new Core.AuthError('Allow the Reddit authorization popup, then connect again.', { code: 'OAUTH_POPUP_BLOCKED' }));
-        return;
-      }
-      const expires = Date.now() + 300_000;
-      const check = () => {
-        if (popup.closed || Date.now() >= expires) {
-          cleanup();
-          reject(new Core.AuthError('Reddit connection was cancelled or timed out. Connect again when ready.', { code: 'OAUTH_CANCELLED' }));
-        } else timer = setTimeout(check, 500);
-      };
-      timer = setTimeout(check, 500);
-    });
-  }
-
-  function userscriptRequest(url, options = {}, transport = typeof GM_xmlhttpRequest === 'function' ? GM_xmlhttpRequest : null) {
-    if (typeof transport !== 'function') throw new Core.AuthError('Update the script in Tampermonkey to enable its Reddit OAuth permission.', { code: 'USERSCRIPT_PERMISSION_REQUIRED' });
-    return new Promise((resolve, reject) => {
-      let settled = false;
-      let request;
-      const finish = (callback, value) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(watchdog);
-        callback(value);
-      };
-      const fail = () => finish(reject, new Core.ApiError('The Reddit request did not complete.', { code: 'NETWORK_ERROR', retryable: true }));
-      // GM's fetch-backed mode does not honor every native XHR option in every
-      // browser. Keep our own deadline, including when an extension callback is lost.
-      const watchdog = setTimeout(() => { fail(); request?.abort?.(); }, 31_000);
-      try { request = transport({
-        url: String(url), method: options.method || 'GET', headers: options.headers || {},
-        data: options.body ? String(options.body) : undefined,
-        anonymous: true, redirect: 'error', timeout: 30_000,
-        onerror: fail, ontimeout: fail, onabort: fail,
-        onload(response) {
-          if (settled) return;
-          try {
-          const target = new URL(url);
-          const finalUrl = new URL(response.finalUrl || url);
-          if (target.origin !== finalUrl.origin || target.pathname !== finalUrl.pathname) {
-            finish(reject, new Core.PauseRequiredError('Reddit redirected the API request. Its result needs review.', { code: 'API_REDIRECT' }));
-            return;
-          }
-          const headers = new Map(String(response.responseHeaders || '').split(/\r?\n/).map((line) => {
-            const colon = line.indexOf(':');
-            return [line.slice(0, colon).trim().toLowerCase(), line.slice(colon + 1).trim()];
-          }));
-          finish(resolve, { status: response.status, ok: response.status >= 200 && response.status < 300,
-            headers: { get: (name) => headers.get(name.toLowerCase()) || null },
-            text: async () => String(response.responseText || '') });
-          } catch { finish(reject, new Core.ApiError('Reddit returned an unreadable response.', { code: 'UNRECOGNIZED_RESPONSE', retryable: true })); }
-        }
-      }); } catch { fail(); }
-    });
-  }
-
-  class RedditOAuthClient extends Reddit.RedditSessionClient {
-    #accessToken = '';
-    #refreshToken = '';
-    #expiresAt = 0;
-    #clientId = '';
-    #refreshing = null;
-    #queue = Promise.resolve();
-    #nextRequestAt = 0;
-    constructor(options = {}) {
-      super(options);
-      this.send = options.send || userscriptRequest;
-      this.authorize = options.authorize || requestAuthorization;
-      this.sleep = options.sleep || Core.wait;
-      this.siteClient = options.siteClient || new Reddit.RedditSessionClient(options);
-    }
-
-    async connect(id) {
-      assertCanonicalOrigin(this.origin);
-      const registeredId = clientId(id);
-      const code = await this.authorize(registeredId);
-      // Finish validation before replacing any still-usable connection.
-      const tokens = await this.exchange(registeredId, { grant_type: 'authorization_code', code, redirect_uri: REDIRECT });
-      this.#clientId = registeredId;
-      this.#refreshToken = '';
-      this.acceptTokens(tokens);
-      return this.getSession();
-    }
-
-    disconnect() {
-      this.#accessToken = '';
-      this.#refreshToken = '';
-      this.#expiresAt = 0;
-      this.#clientId = '';
-      this.username = '';
-    }
-
-    get connected() { return Boolean(this.#accessToken); }
-
-    async exchange(id, values) {
-      const response = await this.send(`${SITE}/api/v1/access_token`, {
-        method: 'POST',
-        headers: { Authorization: `Basic ${btoa(`${id}:`)}`, Accept: 'application/json',
-          'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'browser:RedditToolbox:1.0.0-rc.3 (by /u/slaveofsolace)' },
-        body: new URLSearchParams(values)
-      });
-      const tokens = await this.readResponse(response);
-      const scopes = String(tokens.scope || '').split(/[ ,]+/);
-      if (tokens.token_type?.toLowerCase() !== 'bearer' || typeof tokens.access_token !== 'string' || !tokens.access_token
-        || !Number.isFinite(Number(tokens.expires_in)) || Number(tokens.expires_in) <= 0
-        || !SCOPES.every((scope) => scopes.includes(scope))) {
-        throw new Core.AuthError('Reddit did not grant all permissions needed for your history cleanup.', { code: 'OAUTH_SCOPE_MISSING' });
-      }
-      return tokens;
-    }
-
-    acceptTokens(tokens) {
-      this.#accessToken = tokens.access_token;
-      if (tokens.refresh_token) this.#refreshToken = tokens.refresh_token;
-      this.#expiresAt = Date.now() + Number(tokens.expires_in) * 1000;
-    }
-
-    async token() {
-      if (!this.#accessToken) throw new Core.AuthError('Connect your Reddit account first.', { code: 'OAUTH_NOT_CONNECTED' });
-      if (Date.now() < this.#expiresAt - 60_000) return this.#accessToken;
-      if (!this.#refreshToken) throw new Core.AuthError('Your connection expired. Connect again, then resume the batch.', { code: 'OAUTH_EXPIRED' });
-      if (!this.#refreshing) {
-        this.#refreshing = (async () => {
-          try { this.acceptTokens(await this.exchange(this.#clientId, { grant_type: 'refresh_token', refresh_token: this.#refreshToken })); }
-          catch { throw new Core.AuthError('Reddit could not renew this connection. Connect again, then resume.', { code: 'OAUTH_EXPIRED' }); }
-          finally { this.#refreshing = null; }
-        })();
-      }
-      await this.#refreshing;
-      return this.#accessToken;
-    }
-
-    url(path) {
-      const url = new URL(path, API);
-      if (url.origin !== API || url.username || url.password || url.hash) throw new Core.ApiError('Unsupported Reddit API destination.', { code: 'API_DESTINATION' });
-      return url;
-    }
-
-    async request(path, options = {}) {
-      assertCanonicalOrigin(this.origin);
-      const url = this.url(path);
-      const method = options.method || 'GET';
-      const allowed = method === 'GET'
-        ? /^\/api\/v1\/me$|^\/api\/info\.json$|^\/user\/[a-zA-Z0-9_-]+\/(comments|submitted)\.json$/.test(url.pathname)
-        : method === 'POST' && ['/api/editusertext', '/api/del'].includes(url.pathname);
-      if (!allowed) throw new Core.ApiError('This API operation is outside Reddit Toolbox history cleanup.', { code: 'API_OPERATION' });
-      const operation = this.#queue.then(async () => {
-        const wait = this.#nextRequestAt - Date.now();
-        if (wait > 1000) throw new Core.RateLimitError('Reddit rate-limit budget is resting.', wait);
-        if (wait > 0) await this.sleep(wait);
-        const token = await this.token();
-        this.#nextRequestAt = Date.now() + 700;
-        const response = await this.send(url.href, { ...options,
-          headers: { ...options.headers, Authorization: `Bearer ${token}`, 'User-Agent': 'browser:RedditToolbox:1.0.0-rc.3 (by /u/slaveofsolace)' } });
-        const remaining = response.headers?.get?.('x-ratelimit-remaining');
-        const reset = Number(response.headers?.get?.('x-ratelimit-reset'));
-        if (remaining !== null && remaining !== undefined && Number(remaining) <= 1 && reset > 0) this.#nextRequestAt = Date.now() + Math.ceil(reset * 1000) + 1000;
-        if (response.status === 401) this.#expiresAt = 0;
-        return this.readResponse(response);
-      });
-      this.#queue = operation.catch(() => {});
-      return operation;
-    }
-
-    async postForm(path, values) {
-      return this.request(path, { method: 'POST', headers: { Accept: 'application/json',
-        'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(values) });
-    }
-
-    async getSession() {
-      const identity = await this.getJson('/api/v1/me');
-      if (!identity?.name) throw new Core.AuthError('Reddit did not return an authorized account.', { code: 'OAUTH_IDENTITY' });
-      const session = await this.siteClient.getSession();
-      if (!Reddit.sameUsername(identity.name, session.username)) throw new Core.PauseRequiredError('The authorized account differs from the signed-in Reddit account. Connect the account shown on this page.', { code: 'ACCOUNT_CHANGED' });
-      this.username = String(identity.name);
-      return { username: this.username };
-    }
-  }
-
-  Reddit.OAUTH_REDIRECT = REDIRECT;
-  Reddit.authorizationUrl = authorizationUrl;
-  Reddit.receiveOAuthCallback = receiveOAuthCallback;
-  Reddit.requestAuthorization = requestAuthorization;
-  Reddit.userscriptRequest = userscriptRequest;
-  Reddit.RedditOAuthClient = RedditOAuthClient;
 })();
 
 /* src/reddit/scanner.js */
@@ -2288,11 +2030,8 @@
       * { animation: none !important; scroll-behavior: auto !important; transition: none !important; }
     }
     [hidden] { display: none !important; }
-    .oauth-redirect { overflow-wrap: anywhere; }
     .preview-navigation { justify-content: space-between; align-items: center; }
     .preview-navigation .status-line { flex: 1; text-align: center; }
-    .connection { margin-top: 12px; }
-    .connection .field { margin-top: 12px; }
     .item .actions { justify-content: space-between; align-items: center; margin-top: 8px; }
     .item a { color: var(--rt-accent); font-size: 12px; }
     .item-text { margin: 8px 0; }
@@ -2335,7 +2074,7 @@
       <header class="header">
         <div class="brand">
           <strong>Reddit Toolbox</strong>
-          <span>Automated history cleanup · RC3</span>
+          <span>Automated history cleanup · RC4</span>
         </div>
         <button class="icon-button close" type="button" aria-label="Close">✕</button>
       </header>
@@ -2345,21 +2084,12 @@
           <div class="notice">
             One confirmation starts the entire selected batch. No per-item clicks are required. Keep this tab open; the batch continues while this panel is closed.
           </div>
-          <details class="connection" open>
-            <summary class="connection-summary">Connect Reddit</summary>
-            <p class="status-line">Use the public client ID of your approved Reddit installed app. Authorization opens on Reddit; your password stays there.</p>
-            <div class="field">
-              <label for="oauth-client">Public client ID</label>
-              <input id="oauth-client" type="text" autocomplete="off" spellcheck="false" placeholder="Installed app client ID">
-            </div>
-            <p class="status-line">Registered redirect: <code class="oauth-redirect">https://www.reddit.com/?reddit-toolbox=oauth-callback</code></p>
-            <div class="actions">
-              <button class="button primary connect" type="button">Connect Reddit</button>
-              <button class="button disconnect" type="button" disabled>Disconnect</button>
-              <a class="button canonical-link" href="https://www.reddit.com/" target="_blank" rel="noopener noreferrer">Open www.reddit.com</a>
-            </div>
-            <div class="status-line connection-status" role="status">Disconnected · connection lasts for this tab. Archive files stay local.</div>
-          </details>
+          <div class="status-line account-status" role="status">Uses the Reddit account signed in to this tab. No additional setup.</div>
+          <div class="actions">
+            <button class="button check-login" type="button">Check Reddit login</button>
+            <button class="button clear-history" type="button">Clear loaded history</button>
+            <a class="button canonical-link" href="https://www.reddit.com/" target="_blank" rel="noopener noreferrer">Open www.reddit.com</a>
+          </div>
         </section>
 
         <section class="section scope-section">
@@ -2550,7 +2280,6 @@
       this.username = '';
       this.logLines = [];
       this.busy = false;
-      this.connecting = false;
       this.previewPage = 0;
       this.completionResetTimer = null;
       this.beforeUnloadHandler = (event) => {
@@ -2577,7 +2306,7 @@
       document.body.append(this.host);
       this.captureRefs();
       this.writeSettingsToForm();
-      this.refs.oauthClient.value = String(this.store.get('oauth-client-id', '') || '');
+      this.store.remove?.('oauth-client-id');
       this.refs.canonicalLink.hidden = globalThis.location?.origin === 'https://www.reddit.com';
       this.bindEvents();
       this.updateDateFields();
@@ -2592,8 +2321,7 @@
       this.refs = {
         launcher: $('.launcher'), launcherLabel: $('.launcher-label'), launcherBadge: $('.launcher-badge'),
         panel: $('.panel'), close: $('.close'),
-        connection: $('.connection'), connectionSummary: $('.connection-summary'), oauthClient: $('#oauth-client'), connect: $('.connect'),
-        disconnect: $('.disconnect'), connectionStatus: $('.connection-status'), canonicalLink: $('.canonical-link'),
+        accountStatus: $('.account-status'), checkLogin: $('.check-login'), clearHistory: $('.clear-history'), canonicalLink: $('.canonical-link'),
         previewNavigation: $('.preview-navigation'), previewPrevious: $('.preview-previous'), previewNext: $('.preview-next'), previewPage: $('.preview-page'),
         includeComments: $('#include-comments'), includePosts: $('#include-posts'),
         dateMode: $('#date-mode'), fromDate: $('#from-date'), throughDate: $('#through-date'),
@@ -2620,8 +2348,8 @@
     bindEvents() {
       this.refs.launcher.addEventListener('click', () => this.toggle());
       this.refs.close.addEventListener('click', () => this.close());
-      this.refs.connect.addEventListener('click', () => this.connectAccount());
-      this.refs.disconnect.addEventListener('click', () => this.disconnectAccount());
+      this.refs.checkLogin.addEventListener('click', () => this.checkLogin());
+      this.refs.clearHistory.addEventListener('click', () => this.clearHistory());
       this.refs.previewPrevious.addEventListener('click', () => this.renderPreviewPage(this.previewPage - 1));
       this.refs.previewNext.addEventListener('click', () => this.renderPreviewPage(this.previewPage + 1));
       this.shadow.addEventListener('keydown', (event) => {
@@ -2641,7 +2369,7 @@
       this.refs.retry.addEventListener('click', () => this.prepareRetryBatch());
 
       for (const input of this.shadow.querySelectorAll('input, select')) {
-        if (input === this.refs.archiveInput || input === this.refs.confirmationInput || input === this.refs.oauthClient) continue;
+        if (input === this.refs.archiveInput || input === this.refs.confirmationInput) continue;
         const changed = () => {
           if (this.busy) return;
           this.settings = this.readSettingsFromForm();
@@ -2725,54 +2453,45 @@
     }
 
     ensureClient() {
-      if (!this.client) this.client = new Reddit.RedditOAuthClient();
+      if (!this.client) this.client = new Reddit.RedditSessionClient();
       return this.client;
     }
 
-    async connectAccount() {
-      if (this.connecting || (this.busy && this.runner?.state !== 'paused')) return;
-      this.connecting = true;
+    async checkLogin() {
+      if (this.busy) return;
+      this.busy = true;
       this.refreshControls();
-      this.setStatus(this.refs.connectionStatus, 'Authorize Reddit Toolbox in the Reddit popup…');
+      this.setStatus(this.refs.accountStatus, 'Checking this tab’s Reddit login…');
       try {
-        const client = this.ensureClient();
-        const session = await client.connect(this.refs.oauthClient.value);
-        if (this.runner?.state === 'paused' && !Reddit.sameUsername(session.username, this.plan?.options.accountId)) {
-          throw new Core.PauseRequiredError('Connect the account bound to the paused batch before resuming.', { code: 'ACCOUNT_CHANGED' });
-        }
-        this.store.set('oauth-client-id', this.refs.oauthClient.value.trim());
-        if (this.runner?.state !== 'paused') {
-          if (this.username && !Reddit.sameUsername(this.username, session.username)) {
-            this.profileItems = [];
-            this.archiveItems = [];
-            this.coverage = null;
-          }
-          this.invalidatePlan();
-        }
-        this.username = session.username;
-        this.setStatus(this.refs.connectionStatus, `Connected as u/${session.username} · ready to scan and review.`, 'success');
-        this.refs.connectionSummary.textContent = `u/${session.username} · Connected`;
-        this.refs.connection.open = false;
+        const session = await this.ensureClient().getSession();
+        if (this.username && !Reddit.sameUsername(this.username, session.username)) this.clearLoadedData();
+        this.showAccount(session.username);
       } catch (error) {
-        this.setStatus(this.refs.connectionStatus, UI.compactError(error), 'error');
+        this.invalidatePlan();
+        this.setStatus(this.refs.accountStatus, UI.compactError(error), 'error');
       } finally {
-        this.connecting = false;
+        this.busy = false;
         this.refreshControls();
       }
     }
 
-    disconnectAccount() {
-      if (this.busy || this.connecting) return;
-      this.client?.disconnect?.();
-      this.username = '';
+    showAccount(username) {
+      this.username = username;
+      this.setStatus(this.refs.accountStatus, username ? 'Signed in as u/' + username : 'Local review · sign in to Reddit and prepare again to enable cleanup.', username ? 'success' : '');
+    }
+
+    clearLoadedData() {
       this.profileItems = [];
       this.archiveItems = [];
       this.coverage = null;
       this.invalidatePlan();
       this.renderCounts();
-      this.refs.connection.open = true;
-      this.refs.connectionSummary.textContent = 'Connect Reddit';
-      this.setStatus(this.refs.connectionStatus, 'Disconnected. In-memory history cleared. Authorization can also be revoked in Reddit preferences.');
+    }
+
+    clearHistory() {
+      if (this.busy) return;
+      this.clearLoadedData();
+      this.setStatus(this.refs.scanStatus, 'Loaded history cleared.');
     }
 
     setStatus(element, message, tone = '') {
@@ -2815,8 +2534,9 @@
           includeComments: this.settings.includeComments,
           includePosts: this.settings.includePosts
         });
+        if (this.username && !Reddit.sameUsername(this.username, result.username)) this.clearLoadedData();
         this.profileItems = result.items;
-        this.username = result.username;
+        this.showAccount(result.username);
         this.coverage = result.report;
         this.invalidatePlan();
         const truncated = [result.report.comments, result.report.posts].some((entry) => entry?.truncated);
@@ -2874,9 +2594,18 @@
         const allItems = this.allItems();
         if (!allItems.length) throw new Error('Scan your profile or import Reddit archive CSV files first.');
         const client = this.ensureClient();
-        const localReview = client instanceof Reddit.RedditOAuthClient && !client.connected && !this.profileItems.length;
-        const session = localReview ? { username: '' } : await client.getSession();
-        this.username = session.username;
+        let session;
+        try { session = await client.getSession(); }
+        catch (error) {
+          if (!(error instanceof Core.AuthError) || this.profileItems.length) throw error;
+          session = { username: '' };
+        }
+        if (this.username && session.username && !Reddit.sameUsername(this.username, session.username)) {
+          this.clearLoadedData();
+          this.showAccount(session.username);
+          throw new Error('The Reddit account changed. Scan or import history again for this account.');
+        }
+        this.showAccount(session.username);
         const selection = Core.selectItems(allItems, {
           ...this.settings,
           keepSubreddits: this.settings.keepSubreddits
@@ -2887,10 +2616,11 @@
         this.renderPlan();
         this.setStatus(
           this.refs.scanStatus,
-          `${selection.selected.length} selected${this.username ? ' for one automated batch' : ' for local review; connect Reddit and prepare again to enable cleanup'}; ${Object.values(selection.skipped).reduce((sum, count) => sum + count, 0)} excluded by filters.`,
+          `${selection.selected.length} selected${this.username ? ' for one automated batch' : ' for local review; sign in to Reddit and prepare again to enable cleanup'}; ${Object.values(selection.skipped).reduce((sum, count) => sum + count, 0)} excluded by filters.`,
           'success'
         );
       } catch (error) {
+        this.invalidatePlan();
         this.setStatus(this.refs.scanStatus, UI.compactError(error), 'error');
       } finally {
         this.busy = false;
@@ -2918,6 +2648,7 @@
       this.refs.progress.max = 1;
       this.refs.progress.value = 0;
       this.refs.retry.disabled = true;
+      this.refs.exportBackup.disabled = true;
       this.refs.preview.replaceChildren(Object.assign(document.createElement('div'), {
         className: 'preview-empty',
         textContent: 'Prepare a batch before starting cleanup.'
@@ -2948,8 +2679,8 @@
       const preserved = [filters.keepSubreddits.length ? `keep ${filters.keepSubreddits.map((name) => `r/${name}`).join(', ')}` : '',
         filters.keepScoreAtOrAbove !== null ? `keep score ≥ ${filters.keepScoreAtOrAbove}` : '',
         filters.textIncludes ? 'text filter active' : ''].filter(Boolean).join('; ');
-      this.refs.previewCaption.textContent = `${this.plan.options.accountId ? `u/${this.plan.options.accountId}` : 'Local review · no account connected'} · ${source}${incomplete ? ' (listing limited)' : ''}. ${editable} overwrite then delete; ${uneditable} ${this.plan.options.deleteUneditablePosts ? 'direct delete' : 'will skip'}. ${span}; ${filters.sortOrder} first. ${preserved ? `${preserved}. ` : ''}Lifetime completeness is not established.`;
-      this.refs.confirmationPhrase.textContent = this.plan.options.accountId ? this.plan.confirmation : 'Connect Reddit, then prepare again';
+      this.refs.previewCaption.textContent = `${this.plan.options.accountId ? `u/${this.plan.options.accountId}` : 'Local review · not signed in'} · ${source}${incomplete ? ' (listing limited)' : ''}. ${editable} overwrite then delete; ${uneditable} ${this.plan.options.deleteUneditablePosts ? 'direct delete' : 'will skip'}. ${span}; ${filters.sortOrder} first. ${preserved ? `${preserved}. ` : ''}Lifetime completeness is not established.`;
+      this.refs.confirmationPhrase.textContent = this.plan.options.accountId ? this.plan.confirmation : 'Sign in to Reddit, then prepare again';
       this.refs.preview.replaceChildren();
       this.refs.processedCount.textContent = '0';
       this.refs.remainingCount.textContent = String(contents.length);
@@ -2973,7 +2704,7 @@
       this.refreshControls();
     }
     excludeFromPlan(id) {
-      if (!this.plan || this.busy || this.connecting || this.plan.startedAt) return;
+      if (!this.plan || this.busy || this.plan.startedAt) return;
       const page = this.previewPage;
       this.plan = Core.createPlan(this.plan.items.filter((item) => item.id !== id).map((item) => item.content), this.plan.options);
       this.refs.confirmationInput.value = '';
@@ -3045,7 +2776,7 @@
           keep.className = 'button keep-item';
           keep.type = 'button';
           keep.textContent = 'Keep this item';
-          keep.disabled = Boolean(this.busy || this.connecting || this.plan.startedAt);
+          keep.disabled = Boolean(this.busy || this.plan.startedAt);
           keep.addEventListener('click', () => this.excludeFromPlan(queueItem.id));
           actions.append(keep);
           row.append(head, snippet, fullText, status, actions);
@@ -3111,7 +2842,7 @@
   class RunMethods {
     refreshControls() {
       const active = Boolean(this.runner && ACTIVE_STATES.has(this.runner.state));
-      const locked = Boolean(active || this.busy || this.connecting);
+      const locked = Boolean(active || this.busy);
       const summary = active ? this.runner.progress().summary : Core.planSummary(this.plan);
       const confirmed = Boolean(
         !locked && this.plan?.options.accountId
@@ -3125,9 +2856,8 @@
       this.refs.stop.disabled = !active || this.runner?.state === 'stopping';
       this.refs.retry.disabled = locked || !(summary.failed || summary.stopped);
       this.refs.pause.textContent = this.runner?.state === 'paused' ? 'Resume batch' : 'Pause batch';
-      this.refs.connect.disabled = this.connecting || (this.busy && this.runner?.state !== 'paused');
-      this.refs.oauthClient.disabled = this.refs.connect.disabled;
-      this.refs.disconnect.disabled = locked || !this.username;
+      this.refs.checkLogin.disabled = locked;
+      this.refs.clearHistory.disabled = locked;
       this.refs.exportLog.disabled = !this.plan || !this.plan.items.some((item) => item.status !== 'ready');
 
       for (const element of this.shadow.querySelectorAll('.scope-section input, .scope-section select, .scope-section button')) {
@@ -3307,7 +3037,7 @@
     }
 
     async startRun() {
-      if (this.busy || this.connecting || (this.runner && ACTIVE_STATES.has(this.runner.state))) return;
+      if (this.busy || (this.runner && ACTIVE_STATES.has(this.runner.state))) return;
       if (!this.plan || !Core.isPlanCurrent(this.plan)) {
         this.setStatus(this.refs.runStatus, 'The batch changed. Prepare a new preview.', 'error');
         return;
@@ -3334,7 +3064,7 @@
       try {
         const client = this.ensureClient();
         const session = await client.assertSession(this.plan.options.accountId, true);
-        this.username = session.username;
+        this.showAccount(session.username);
         const serviceKey = this.plan.options.accountId;
         let service = this.removalServices.get(serviceKey);
         if (!service || service.client !== client) {
@@ -3381,7 +3111,7 @@
     }
 
     async togglePause() {
-      if (!this.runner || this.connecting) return;
+      if (!this.runner) return;
       if (this.runner.state === 'paused') {
         this.setStatus(this.refs.runStatus, 'Refreshing the Reddit session before resuming…');
         try {
@@ -3474,7 +3204,6 @@
   'use strict';
 
   const toolbox = globalThis.RedditToolbox;
-  if (toolbox.Reddit.receiveOAuthCallback()) return;
   toolbox.App ||= {};
 
   toolbox.App.start = () => {

@@ -33,7 +33,7 @@
   class RunMethods {
     refreshControls() {
       const active = Boolean(this.runner && ACTIVE_STATES.has(this.runner.state));
-      const locked = Boolean(active || this.busy || this.connecting);
+      const locked = Boolean(active || this.busy);
       const summary = active ? this.runner.progress().summary : Core.planSummary(this.plan);
       const confirmed = Boolean(
         !locked && this.plan?.options.accountId
@@ -47,9 +47,8 @@
       this.refs.stop.disabled = !active || this.runner?.state === 'stopping';
       this.refs.retry.disabled = locked || !(summary.failed || summary.stopped);
       this.refs.pause.textContent = this.runner?.state === 'paused' ? 'Resume batch' : 'Pause batch';
-      this.refs.connect.disabled = this.connecting || (this.busy && this.runner?.state !== 'paused');
-      this.refs.oauthClient.disabled = this.refs.connect.disabled;
-      this.refs.disconnect.disabled = locked || !this.username;
+      this.refs.checkLogin.disabled = locked;
+      this.refs.clearHistory.disabled = locked;
       this.refs.exportLog.disabled = !this.plan || !this.plan.items.some((item) => item.status !== 'ready');
 
       for (const element of this.shadow.querySelectorAll('.scope-section input, .scope-section select, .scope-section button')) {
@@ -229,7 +228,7 @@
     }
 
     async startRun() {
-      if (this.busy || this.connecting || (this.runner && ACTIVE_STATES.has(this.runner.state))) return;
+      if (this.busy || (this.runner && ACTIVE_STATES.has(this.runner.state))) return;
       if (!this.plan || !Core.isPlanCurrent(this.plan)) {
         this.setStatus(this.refs.runStatus, 'The batch changed. Prepare a new preview.', 'error');
         return;
@@ -256,7 +255,7 @@
       try {
         const client = this.ensureClient();
         const session = await client.assertSession(this.plan.options.accountId, true);
-        this.username = session.username;
+        this.showAccount(session.username);
         const serviceKey = this.plan.options.accountId;
         let service = this.removalServices.get(serviceKey);
         if (!service || service.client !== client) {
@@ -303,7 +302,7 @@
     }
 
     async togglePause() {
-      if (!this.runner || this.connecting) return;
+      if (!this.runner) return;
       if (this.runner.state === 'paused') {
         this.setStatus(this.refs.runStatus, 'Refreshing the Reddit session before resuming…');
         try {

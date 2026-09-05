@@ -228,11 +228,13 @@ test('requests have a bounded timeout and reject noncanonical destructive origin
   }
 });
 
-test('the production UI uses OAuth and sends no live request before connection', async () => {
+test('the production UI uses the existing login without OAuth or a client ID', async () => {
   let calls = 0;
-  const { UI, Reddit } = load({ fetch: async () => { calls += 1; throw new Error('No live traffic'); } });
+  const { UI, Reddit } = load({ fetch: async () => { calls += 1; return { ok: true, status: 200, headers: { get: () => 'application/json' }, text: async () => JSON.stringify({ data: { name: 'fixture-owner', modhash: 'fixture-action' } }) }; } });
   const app = new UI.RedditToolboxApp({ store: { get: (_name, fallback) => fallback } });
-  assert.ok(app.ensureClient() instanceof Reddit.RedditOAuthClient);
-  await assert.rejects(app.ensureClient().getSession(), { code: 'OAUTH_NOT_CONNECTED' });
+  assert.ok(app.ensureClient() instanceof Reddit.RedditSessionClient);
   assert.equal(calls, 0);
+  assert.equal((await app.ensureClient().getSession()).username, 'fixture-owner');
+  assert.equal(calls, 1);
+  assert.equal(Reddit.RedditOAuthClient, undefined);
 });

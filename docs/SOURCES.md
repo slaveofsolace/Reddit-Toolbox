@@ -16,4 +16,4 @@ Shreddit reference inspection covered its README, `src/sources/gdpr.rs`, and `sr
 
 No third-party code, assets, binaries, packages, or scripts were imported, executed, or redistributed. Acquisition, archive scanning, candidate integration, and redistribution stages are therefore not applicable. The implementation is original work in the existing repository; this registry credits references rather than claiming their code was incorporated. No third-party logo or UI artwork is used.
 
-The existing engine retains stricter result verification and account binding. A tool's popularity or license does not establish Reddit approval or validate current endpoint behavior. OAuth and extension behavior are checked against the primary sources in [API access](API_ACCESS.md).
+The existing engine retains stricter result verification and account binding. A tool's popularity or license does not establish Reddit approval or validate current endpoint behavior. The current product uses the [existing browser session](API_ACCESS.md); it does not copy Shreddit’s credential setup.

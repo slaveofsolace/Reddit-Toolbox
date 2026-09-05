@@ -1,6 +1,6 @@
 # Installation
 
-Install the single RC3 userscript. Its OAuth flow and batch behavior are fixture-tested; real Reddit and Tampermonkey acceptance remain pending. See [connection setup](API_ACCESS.md).
+Install the single RC4 userscript. Your normal Reddit login is the only account setup.
 
 ## Install the userscript
 
@@ -11,9 +11,9 @@ Install the single RC3 userscript. Its OAuth flow and batch behavior are fixture
 5. Sign in to Reddit and reload the tab.
 6. Select the orange **RT** launcher. The Tampermonkey menu also includes **Open Reddit Toolbox**.
 
-## Connect your account
+## Use your existing login
 
-Open **www.reddit.com** and use **Connect Reddit** with your approved installed-app public client ID. Register the exact redirect shown in the panel. Tokens stay in this tab; no password, secret, or backend is needed. [Full instructions](API_ACCESS.md).
+Open **www.reddit.com**, sign in normally, and select **RT**. **Scan history** automatically detects the current account. No registered app, OAuth authorization, client ID, or API key is needed. [Session details](API_ACCESS.md).
 
 ## Prepare broader history
 
@@ -46,7 +46,7 @@ Link and media posts have no editable body. They are skipped unless **Delete lin
 
 ## Update
 
-Tampermonkey checks the userscript's `@updateURL`. Keep the script name and namespace unchanged for updates. RC3 has a higher version than RC1/RC2 and retains the same name and namespace. Review the new Reddit OAuth network grants when Tampermonkey requests them. Actual update-in-place from RC1 and RC2 remains an unchecked acceptance gate.
+Tampermonkey checks the userscript’s `@updateURL`. You can also reopen the install link and choose **Update**. RC4 keeps the same name and namespace, raises the version, and removes RC3’s cross-origin network permissions. Reload existing Reddit tabs after updating; an already running tab still contains its previous script until reload. Any saved RC3 public client ID is removed on first mount.
 
 ## Remove
 

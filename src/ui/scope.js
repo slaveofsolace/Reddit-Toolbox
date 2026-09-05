@@ -27,8 +27,9 @@
           includeComments: this.settings.includeComments,
           includePosts: this.settings.includePosts
         });
+        if (this.username && !Reddit.sameUsername(this.username, result.username)) this.clearLoadedData();
         this.profileItems = result.items;
-        this.username = result.username;
+        this.showAccount(result.username);
         this.coverage = result.report;
         this.invalidatePlan();
         const truncated = [result.report.comments, result.report.posts].some((entry) => entry?.truncated);
@@ -86,9 +87,18 @@
         const allItems = this.allItems();
         if (!allItems.length) throw new Error('Scan your profile or import Reddit archive CSV files first.');
         const client = this.ensureClient();
-        const localReview = client instanceof Reddit.RedditOAuthClient && !client.connected && !this.profileItems.length;
-        const session = localReview ? { username: '' } : await client.getSession();
-        this.username = session.username;
+        let session;
+        try { session = await client.getSession(); }
+        catch (error) {
+          if (!(error instanceof Core.AuthError) || this.profileItems.length) throw error;
+          session = { username: '' };
+        }
+        if (this.username && session.username && !Reddit.sameUsername(this.username, session.username)) {
+          this.clearLoadedData();
+          this.showAccount(session.username);
+          throw new Error('The Reddit account changed. Scan or import history again for this account.');
+        }
+        this.showAccount(session.username);
         const selection = Core.selectItems(allItems, {
           ...this.settings,
           keepSubreddits: this.settings.keepSubreddits
@@ -99,10 +109,11 @@
         this.renderPlan();
         this.setStatus(
           this.refs.scanStatus,
-          `${selection.selected.length} selected${this.username ? ' for one automated batch' : ' for local review; connect Reddit and prepare again to enable cleanup'}; ${Object.values(selection.skipped).reduce((sum, count) => sum + count, 0)} excluded by filters.`,
+          `${selection.selected.length} selected${this.username ? ' for one automated batch' : ' for local review; sign in to Reddit and prepare again to enable cleanup'}; ${Object.values(selection.skipped).reduce((sum, count) => sum + count, 0)} excluded by filters.`,
           'success'
         );
       } catch (error) {
+        this.invalidatePlan();
         this.setStatus(this.refs.scanStatus, UI.compactError(error), 'error');
       } finally {
         this.busy = false;
@@ -130,6 +141,7 @@
       this.refs.progress.max = 1;
       this.refs.progress.value = 0;
       this.refs.retry.disabled = true;
+      this.refs.exportBackup.disabled = true;
       this.refs.preview.replaceChildren(Object.assign(document.createElement('div'), {
         className: 'preview-empty',
         textContent: 'Prepare a batch before starting cleanup.'
@@ -160,8 +172,8 @@
       const preserved = [filters.keepSubreddits.length ? `keep ${filters.keepSubreddits.map((name) => `r/${name}`).join(', ')}` : '',
         filters.keepScoreAtOrAbove !== null ? `keep score ≥ ${filters.keepScoreAtOrAbove}` : '',
         filters.textIncludes ? 'text filter active' : ''].filter(Boolean).join('; ');
-      this.refs.previewCaption.textContent = `${this.plan.options.accountId ? `u/${this.plan.options.accountId}` : 'Local review · no account connected'} · ${source}${incomplete ? ' (listing limited)' : ''}. ${editable} overwrite then delete; ${uneditable} ${this.plan.options.deleteUneditablePosts ? 'direct delete' : 'will skip'}. ${span}; ${filters.sortOrder} first. ${preserved ? `${preserved}. ` : ''}Lifetime completeness is not established.`;
-      this.refs.confirmationPhrase.textContent = this.plan.options.accountId ? this.plan.confirmation : 'Connect Reddit, then prepare again';
+      this.refs.previewCaption.textContent = `${this.plan.options.accountId ? `u/${this.plan.options.accountId}` : 'Local review · not signed in'} · ${source}${incomplete ? ' (listing limited)' : ''}. ${editable} overwrite then delete; ${uneditable} ${this.plan.options.deleteUneditablePosts ? 'direct delete' : 'will skip'}. ${span}; ${filters.sortOrder} first. ${preserved ? `${preserved}. ` : ''}Lifetime completeness is not established.`;
+      this.refs.confirmationPhrase.textContent = this.plan.options.accountId ? this.plan.confirmation : 'Sign in to Reddit, then prepare again';
       this.refs.preview.replaceChildren();
       this.refs.processedCount.textContent = '0';
       this.refs.remainingCount.textContent = String(contents.length);
@@ -185,7 +197,7 @@
       this.refreshControls();
     }
     excludeFromPlan(id) {
-      if (!this.plan || this.busy || this.connecting || this.plan.startedAt) return;
+      if (!this.plan || this.busy || this.plan.startedAt) return;
       const page = this.previewPage;
       this.plan = Core.createPlan(this.plan.items.filter((item) => item.id !== id).map((item) => item.content), this.plan.options);
       this.refs.confirmationInput.value = '';
@@ -257,7 +269,7 @@
           keep.className = 'button keep-item';
           keep.type = 'button';
           keep.textContent = 'Keep this item';
-          keep.disabled = Boolean(this.busy || this.connecting || this.plan.startedAt);
+          keep.disabled = Boolean(this.busy || this.plan.startedAt);
           keep.addEventListener('click', () => this.excludeFromPlan(queueItem.id));
           actions.append(keep);
           row.append(head, snippet, fullText, status, actions);

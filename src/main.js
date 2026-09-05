@@ -2,7 +2,6 @@
   'use strict';
 
   const toolbox = globalThis.RedditToolbox;
-  if (toolbox.Reddit.receiveOAuthCallback()) return;
   toolbox.App ||= {};
 
   toolbox.App.start = () => {

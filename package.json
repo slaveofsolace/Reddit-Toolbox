@@ -1,6 +1,6 @@
 {
   "name": "reddit-toolbox",
-  "version": "1.0.0-rc.3",
+  "version": "1.0.0-rc.4",
   "private": true,
   "description": "Local-first automated Reddit history cleanup userscript.",
   "type": "module",

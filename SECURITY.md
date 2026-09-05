@@ -2,7 +2,7 @@
 
 ## Supported version
 
-Security fixes currently target `1.0.0-rc.3` until a stable release replaces it.
+Security fixes currently target `1.0.0-rc.4` until a stable release replaces it.
 
 ## Reporting
 
@@ -10,7 +10,7 @@ Do not post account data, archive files, session values, or access tokens in a p
 
 ## Safety boundaries
 
-- OAuth accepts only exact www.reddit.com and oauth.reddit.com destinations and the documented cleanup operations. Tokens stay in private memory; no secrets or passwords are collected.
+- Session requests stay on the current supported HTTPS Reddit origin, include the existing login, reject redirects, and have a bounded deadline. The action token remains in memory; failed session refreshes clear cached credentials. No passwords, raw cookies, or OAuth credentials are collected.
 - A finite batch is bound to exact Reddit fullnames, ordered targets, editability, and destructive options.
 - One explicit confirmation authorizes the reviewed batch; no item is added after confirmation.
 - The active Reddit account is revalidated before every item, then ownership is checked before mutation.

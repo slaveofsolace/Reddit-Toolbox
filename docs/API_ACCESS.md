@@ -1,34 +1,28 @@
-# Userscript connection
+# Existing Reddit session
 
-The product is one Tampermonkey script. RC3 includes a public installed-app OAuth connection in the script; no hosted callback, companion server, password, or client secret is used.
+RC4 runs directly inside the Reddit page using the account already signed in to that tab. There is no OAuth registration, consent popup, client ID, API key, client secret, password field, or external service to configure.
 
-## Setup
+## Use
 
-1. Obtain Reddit API approval for the own-account cleanup use case and an **installed app** public client ID. A confidential script/web app is not interchangeable.
-2. Register this exact redirect for that app:
+1. Install or update Reddit Toolbox and reload **www.reddit.com**.
+2. Sign in normally. Open **RT**, choose a scope, and select **Scan history**.
+3. Review the detected account and selected items, confirm the batch, and run it.
 
-   https://www.reddit.com/?reddit-toolbox=oauth-callback
+**Check Reddit login** is optional; scanning, preparing, running, and resuming all check the session themselves. **Clear loaded history** removes the local scan, imports, and review without signing you out of Reddit. A failed login check invalidates a prepared batch. An account change requires fresh history and review.
 
-3. On **www.reddit.com**, open RT → **Connect Reddit**, enter the public client ID, and connect.
-4. Review Reddit's consent screen. Return to the original tab after authorization and check the connected username.
-5. Scan or import, prepare a fresh batch, and review its account and targets before confirming.
+## Request model
 
-Approval of this use case and redirect has not been established for this project. The documented installed-app code flow is implemented and fixture-tested; current Reddit acceptance of the registered app/redirect must be verified with the actual app. A working local fixture is not platform approval.
+The script sends same-origin requests with the browser's normal login credentials. It reads the signed-in username and Reddit's session action token (modhash) from /api/me.json; the token is held in tab memory and supplied with edits/deletions. The script never reads or copies raw cookies and never asks for a token to be pasted.
 
-## Implementation
+History comes from the account's comments/submitted JSON listings. Item checks use /api/info.json; editable bodies use /api/editusertext; deletion uses /api/del. Every mutation remains bound to the reviewed account and exact item, with ownership and saved-text verification.
 
-The authorization code flow requests only identity, history, read, and edit scopes. A cryptographically random state, exact Reddit origin, and exact popup source are checked. The callback immediately removes code/state from its URL. The original tab exchanges the one-use code directly with Reddit using the public client ID and an empty installed-app secret.
+This is an unofficial integration with Reddit's website session endpoints. It depends on the logged-in website continuing to accept those requests; a fixture test cannot establish live compatibility. It is not a claim of Reddit endorsement or API approval.
 
-Access/refresh tokens live in private in-memory fields. API calls use cookie-free Tampermonkey requests to oauth.reddit.com. A separate same-origin identity read checks the current Reddit page account against the OAuth account; reviewed account changes pause mutations. Token renewal happens before expiry. Reconnecting does not press Resume or start another batch.
+## If a request fails
 
-Disconnect clears tokens and loaded history. It does not revoke Reddit's grant; revoke that separately in Reddit's authorized-app preferences if desired. Reload clears the connection and all destructive run authority. The public client ID is the only saved connection value.
+- Expired login or missing session action token: refresh the page, sign in normally, then prepare again.
+- Account changed: return to the reviewed account or load fresh history for the new account.
+- Forbidden request, challenge, or unrecognized response: check Reddit's page notice. The batch pauses.
+- Rate limit: the runner waits for Reddit's supplied interval. Uncertain mutations are read back instead of blindly resent.
 
-The legacy session/modhash adapter remains a fixture adapter and supplies the same-origin identity read. It is never the production mutation fallback. Invalid destinations, operations, redirects, missing scopes, unavailable userscript permissions, and expired/revoked authorization produce actionable errors.
-
-## Primary sources checked 2026-09-05
-
-- [Responsible Builder Policy](https://support.reddithelp.com/hc/en-us/articles/42728983564564-Responsible-Builder-Policy): explicit API approval and respect for access limits.
-- [Reddit OAuth documentation](https://github.com/reddit-archive/reddit/wiki/OAuth2): installed clients without a secret, authorization code exchange, refresh, state, and scopes. This is legacy documentation; no PKCE support is asserted.
-- [Tampermonkey documentation](https://www.tampermonkey.net/documentation.php): narrow connection grants and userscript requests.
-
-Live account verification and deletion acceptance remain pending. The owner has authorized testing their own content; choose an exact small batch when a working authorized connection is available and observe overwrite, read-back, deletion, and automatic advancement.
+All destructive actions use **www.reddit.com**, where an exclusive Web Lock prevents concurrent batches. Other supported Reddit origins can show the panel and review archives; the panel links to the canonical site for cleanup. No cross-origin userscript network permission is requested.

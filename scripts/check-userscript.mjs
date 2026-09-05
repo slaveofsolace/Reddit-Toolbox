@@ -19,8 +19,6 @@ if (!metadata.includes(`@version      ${pkg.version}\n`)) throw new Error('Packa
 const required = [
   '// ==UserScript==',
   'class RedditSessionClient',
-  'class RedditOAuthClient',
-  '@grant        GM_xmlhttpRequest',
   'class BatchRunner',
   'class RedditRemovalService',
   'class RedditToolboxApp',
@@ -39,4 +37,5 @@ if (namespace.RedditToolbox.version !== pkg.version || namespace.ToolboxFamily.v
 if (/\b(?:eval|new Function)\s*\(/.test(script)) {
   throw new Error('Built userscript contains dynamic code evaluation.');
 }
+if (/RedditOAuthClient|oauth\.reddit\.com|GM_xmlhttpRequest|@connect\s/.test(script)) throw new Error('The session userscript contains an unexpected OAuth or cross-origin dependency.');
 console.log('Userscript integrity checks passed.');

@@ -156,6 +156,9 @@
     }
 
     async getSession(requireModhash = false) {
+      // Never retain action credentials after a failed session refresh.
+      this.username = '';
+      this.modhash = '';
       const payload = await this.getJson('/api/me.json?raw_json=1');
       const data = payload?.data;
       if (!data?.name) throw new Core.AuthError();
@@ -163,7 +166,7 @@
       this.modhash = String(data.modhash || '');
       if (requireModhash && !this.modhash) {
         throw new Core.AuthError(
-          'The provisional session adapter did not receive an action token. Live access requires approved OAuth setup.',
+          'Reddit did not provide its session action token. Refresh the page and sign in again before cleanup.',
           { code: 'MODHASH_MISSING' }
         );
       }

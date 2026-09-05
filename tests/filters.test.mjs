@@ -54,3 +54,10 @@ test('dateRange rejects reversed windows', () => {
     throughDate: '2024-01-01'
   }), /starting date/i);
 });
+
+test('keep filters retain archive items with unknown protected fields', () => {
+  const row = { fullname: 't1_test', kind: 'comment', createdAt: Date.now(), score: null, subreddit: '' };
+  assert.equal(Core.evaluateItem(row, { keepScoreAtOrAbove: 10 }), 'unknown-score');
+  assert.equal(Core.evaluateItem(row, { keepSubreddits: 'test' }), 'unknown-subreddit');
+  assert.equal(Core.evaluateItem({ ...row, score: 0 }, { keepScoreAtOrAbove: 10 }), null);
+});

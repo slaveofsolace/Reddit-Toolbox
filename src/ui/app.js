@@ -21,7 +21,6 @@
       this.username = '';
       this.logLines = [];
       this.busy = false;
-      this.connecting = false;
       this.previewPage = 0;
       this.completionResetTimer = null;
       this.beforeUnloadHandler = (event) => {
@@ -48,7 +47,7 @@
       document.body.append(this.host);
       this.captureRefs();
       this.writeSettingsToForm();
-      this.refs.oauthClient.value = String(this.store.get('oauth-client-id', '') || '');
+      this.store.remove?.('oauth-client-id');
       this.refs.canonicalLink.hidden = globalThis.location?.origin === 'https://www.reddit.com';
       this.bindEvents();
       this.updateDateFields();
@@ -63,8 +62,7 @@
       this.refs = {
         launcher: $('.launcher'), launcherLabel: $('.launcher-label'), launcherBadge: $('.launcher-badge'),
         panel: $('.panel'), close: $('.close'),
-        connection: $('.connection'), connectionSummary: $('.connection-summary'), oauthClient: $('#oauth-client'), connect: $('.connect'),
-        disconnect: $('.disconnect'), connectionStatus: $('.connection-status'), canonicalLink: $('.canonical-link'),
+        accountStatus: $('.account-status'), checkLogin: $('.check-login'), clearHistory: $('.clear-history'), canonicalLink: $('.canonical-link'),
         previewNavigation: $('.preview-navigation'), previewPrevious: $('.preview-previous'), previewNext: $('.preview-next'), previewPage: $('.preview-page'),
         includeComments: $('#include-comments'), includePosts: $('#include-posts'),
         dateMode: $('#date-mode'), fromDate: $('#from-date'), throughDate: $('#through-date'),
@@ -91,8 +89,8 @@
     bindEvents() {
       this.refs.launcher.addEventListener('click', () => this.toggle());
       this.refs.close.addEventListener('click', () => this.close());
-      this.refs.connect.addEventListener('click', () => this.connectAccount());
-      this.refs.disconnect.addEventListener('click', () => this.disconnectAccount());
+      this.refs.checkLogin.addEventListener('click', () => this.checkLogin());
+      this.refs.clearHistory.addEventListener('click', () => this.clearHistory());
       this.refs.previewPrevious.addEventListener('click', () => this.renderPreviewPage(this.previewPage - 1));
       this.refs.previewNext.addEventListener('click', () => this.renderPreviewPage(this.previewPage + 1));
       this.shadow.addEventListener('keydown', (event) => {
@@ -112,7 +110,7 @@
       this.refs.retry.addEventListener('click', () => this.prepareRetryBatch());
 
       for (const input of this.shadow.querySelectorAll('input, select')) {
-        if (input === this.refs.archiveInput || input === this.refs.confirmationInput || input === this.refs.oauthClient) continue;
+        if (input === this.refs.archiveInput || input === this.refs.confirmationInput) continue;
         const changed = () => {
           if (this.busy) return;
           this.settings = this.readSettingsFromForm();
@@ -196,54 +194,45 @@
     }
 
     ensureClient() {
-      if (!this.client) this.client = new Reddit.RedditOAuthClient();
+      if (!this.client) this.client = new Reddit.RedditSessionClient();
       return this.client;
     }
 
-    async connectAccount() {
-      if (this.connecting || (this.busy && this.runner?.state !== 'paused')) return;
-      this.connecting = true;
+    async checkLogin() {
+      if (this.busy) return;
+      this.busy = true;
       this.refreshControls();
-      this.setStatus(this.refs.connectionStatus, 'Authorize Reddit Toolbox in the Reddit popup…');
+      this.setStatus(this.refs.accountStatus, 'Checking this tab’s Reddit login…');
       try {
-        const client = this.ensureClient();
-        const session = await client.connect(this.refs.oauthClient.value);
-        if (this.runner?.state === 'paused' && !Reddit.sameUsername(session.username, this.plan?.options.accountId)) {
-          throw new Core.PauseRequiredError('Connect the account bound to the paused batch before resuming.', { code: 'ACCOUNT_CHANGED' });
-        }
-        this.store.set('oauth-client-id', this.refs.oauthClient.value.trim());
-        if (this.runner?.state !== 'paused') {
-          if (this.username && !Reddit.sameUsername(this.username, session.username)) {
-            this.profileItems = [];
-            this.archiveItems = [];
-            this.coverage = null;
-          }
-          this.invalidatePlan();
-        }
-        this.username = session.username;
-        this.setStatus(this.refs.connectionStatus, `Connected as u/${session.username} · ready to scan and review.`, 'success');
-        this.refs.connectionSummary.textContent = `u/${session.username} · Connected`;
-        this.refs.connection.open = false;
+        const session = await this.ensureClient().getSession();
+        if (this.username && !Reddit.sameUsername(this.username, session.username)) this.clearLoadedData();
+        this.showAccount(session.username);
       } catch (error) {
-        this.setStatus(this.refs.connectionStatus, UI.compactError(error), 'error');
+        this.invalidatePlan();
+        this.setStatus(this.refs.accountStatus, UI.compactError(error), 'error');
       } finally {
-        this.connecting = false;
+        this.busy = false;
         this.refreshControls();
       }
     }
 
-    disconnectAccount() {
-      if (this.busy || this.connecting) return;
-      this.client?.disconnect?.();
-      this.username = '';
+    showAccount(username) {
+      this.username = username;
+      this.setStatus(this.refs.accountStatus, username ? 'Signed in as u/' + username : 'Local review · sign in to Reddit and prepare again to enable cleanup.', username ? 'success' : '');
+    }
+
+    clearLoadedData() {
       this.profileItems = [];
       this.archiveItems = [];
       this.coverage = null;
       this.invalidatePlan();
       this.renderCounts();
-      this.refs.connection.open = true;
-      this.refs.connectionSummary.textContent = 'Connect Reddit';
-      this.setStatus(this.refs.connectionStatus, 'Disconnected. In-memory history cleared. Authorization can also be revoked in Reddit preferences.');
+    }
+
+    clearHistory() {
+      if (this.busy) return;
+      this.clearLoadedData();
+      this.setStatus(this.refs.scanStatus, 'Loaded history cleared.');
     }
 
     setStatus(element, message, tone = '') {

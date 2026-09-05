@@ -32,7 +32,7 @@
       <header class="header">
         <div class="brand">
           <strong>Reddit Toolbox</strong>
-          <span>Automated history cleanup · RC3</span>
+          <span>Automated history cleanup · RC4</span>
         </div>
         <button class="icon-button close" type="button" aria-label="Close">✕</button>
       </header>
@@ -42,21 +42,12 @@
           <div class="notice">
             One confirmation starts the entire selected batch. No per-item clicks are required. Keep this tab open; the batch continues while this panel is closed.
           </div>
-          <details class="connection" open>
-            <summary class="connection-summary">Connect Reddit</summary>
-            <p class="status-line">Use the public client ID of your approved Reddit installed app. Authorization opens on Reddit; your password stays there.</p>
-            <div class="field">
-              <label for="oauth-client">Public client ID</label>
-              <input id="oauth-client" type="text" autocomplete="off" spellcheck="false" placeholder="Installed app client ID">
-            </div>
-            <p class="status-line">Registered redirect: <code class="oauth-redirect">https://www.reddit.com/?reddit-toolbox=oauth-callback</code></p>
-            <div class="actions">
-              <button class="button primary connect" type="button">Connect Reddit</button>
-              <button class="button disconnect" type="button" disabled>Disconnect</button>
-              <a class="button canonical-link" href="https://www.reddit.com/" target="_blank" rel="noopener noreferrer">Open www.reddit.com</a>
-            </div>
-            <div class="status-line connection-status" role="status">Disconnected · connection lasts for this tab. Archive files stay local.</div>
-          </details>
+          <div class="status-line account-status" role="status">Uses the Reddit account signed in to this tab. No additional setup.</div>
+          <div class="actions">
+            <button class="button check-login" type="button">Check Reddit login</button>
+            <button class="button clear-history" type="button">Clear loaded history</button>
+            <a class="button canonical-link" href="https://www.reddit.com/" target="_blank" rel="noopener noreferrer">Open www.reddit.com</a>
+          </div>
         </section>
 
         <section class="section scope-section">
