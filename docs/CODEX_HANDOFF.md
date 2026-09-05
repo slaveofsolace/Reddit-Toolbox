@@ -18,6 +18,8 @@ Build with npm ci and npm run check (83 tests). npm run test:browser runs the po
 
 ## Live checkpoint
 
+RC5 implementation c596861 is committed and pushed to main. Its CI/build workflows passed and the public artifact/checksum match. The RC5 update prompt is open, but CUA's URL policy blocked access to its extension page. The owner was asked to click Update. A fresh Reddit tab still showed RC4 at the last check; installed RC5 acceptance remains pending. Do not bypass the rejected extension page through another tool or raw commands.
+
 The old Reddit tab holding the reported stalled run could not be attached through CUA (Debugger unattached). A fresh Reddit diagnosis tab is accessible. Preserve the old tab until the owner finishes/stops the run; do not reload away its evidence. The specific failing comment has not yet been supplied. Synthetic recovery tests do not constitute a live reproduction of that exact case.
 
 The owner completed the RC4 update and confirmed the exact two-comment live batch on 2026-09-05. The installed Chrome script scanned using the existing login, then one Run entire batch action completed both comments in 14 seconds: 2 deleted, 0 failed, 0 skipped. Both rows reported overwritten-and-deleted. Read-only network tracing observed edit → delete → edit → delete, with no duplicate mutation requests and HTTP 200 for all 24 cleanup responses. The completed batch has Run disabled; do not run it again. Local evidence is saved as work/rc4-live-completion.json in the project handoff folder.

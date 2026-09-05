@@ -46,6 +46,12 @@ Local evidence is retained under work/browser-rc5 in the project handoff folder.
 
 The owner's older stalled tab could not be attached through the available browser tool. Its in-memory run was preserved. The reported exact failing comment has not yet been identified, so the recovery mechanisms are covered by synthetic fixtures and unit tests; they are not represented as a reproduction of that specific live failure.
 
+## Distribution
+
+Implementation [c596861](https://github.com/slaveofsolace/Reddit-Toolbox/commit/c596861b6dd39dedbe85e457d34e8dfafd3e329d) is on main. [CI](https://github.com/slaveofsolace/Reddit-Toolbox/actions/runs/33979102549) and [Build userscript](https://github.com/slaveofsolace/Reddit-Toolbox/actions/runs/33979102633) passed. The public install file and checksum matched the local 145,407-byte artifact on 2026-09-05: SHA-256 `f90913edeb181cfc26f7a774bd6793e70e5865739052c32930c067c8451246fd`.
+
+The RC5 Tampermonkey update prompt was opened. Browser URL policy rejected access to the extension's update page, so the owner must complete its Update click. A fresh Reddit tab still displayed RC4 at the last check. No attempt was made to bypass the blocked extension page, and no new live deletion was performed during this repair.
+
 ## Earlier live baseline (RC4)
 
 On 2026-09-05, the installed RC4 script detected the existing Reddit login and scanned the owner’s profile without OAuth or keys. After the owner confirmed the exact two-comment batch, one Run entire batch action completed both comments in 14 seconds. Each row reported completed · overwritten-and-deleted; final metrics were 2 processed, 2 deleted, 0 remaining, 0 failed, and 0 skipped. Run was disabled after completion.
