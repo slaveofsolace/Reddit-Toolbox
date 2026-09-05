@@ -1,50 +1,52 @@
-# RC4 acceptance checklist
+# RC5 acceptance checklist
 
-Session-first development candidate, 2026-09-05. No OAuth, registered app, client ID, or API key is required by the script.
+Userscript first, 2026-09-05. Existing Reddit login; no OAuth, app registration, client ID, or API key.
 
 ## Automated checks
 
-- [x] 73 passing Node tests, including generated-userscript execution with the default session client
-- [x] Deterministic composition, matching versions, syntax, no dynamic evaluation, SHA-256
-- [x] Same-origin browser credentials; cached action credentials cleared on failed identity reads
-- [x] No OAuth adapter, popup, cross-origin GM transport, or network grants in the generated artifact
-- [x] Account-bound frozen targets, ownership/editability checks, direct-delete opt-in
-- [x] Replacement read-back, deletion verification, no blind resend after uncertain mutations
-- [x] Pause/stop/retry, account changes, 401/403, rate-limit waits, failure guard
-- [x] Mandatory Web Locks and canonical origin; no restored run authority after reload
-- [x] Strict CSV records, yielding imports, duplicate/rejection counts, protection of unknown fields
-- [x] Preference-only persistence and sanitized run logs
+- [x] 83 Node tests; deterministic composition, matching versions, syntax, and SHA-256 checks
+- [x] Account-bound frozen targets, mutation-boundary ownership/editability and saved-text checks
+- [x] Explicit deleted markers and acknowledged deletions followed by repeated valid absent reads
+- [x] Missing data alone, mismatched IDs, malformed listings, and moderation removal rejected as deletion evidence
+- [x] One bounded retry for an acknowledged no-op; no blind resend for a lost response
+- [x] Unconfirmed rows continue the batch, stay separate from deleted counts, and have read-only rechecks
+- [x] Login revalidation before rechecking results; HTTP 200 rejection envelopes handled as errors
+- [x] Web Locks, rate limits, pause/stop, failure guard, no destructive restoration on reload
+- [x] Original archive, filtering, review, privacy, and generated-script regression coverage
 
-## Rendered browser fixtures
+## Browser acceptance
 
-The exact generated script ran in isolated Chromium 151.0.7922.34 and Firefox 153.0. All network traffic was intercepted with synthetic Reddit responses. The default session client was used; no client injection, OAuth connection, or setup button was needed. These profiles simulate Tampermonkey preference APIs and do not prove extension or live Reddit acceptance.
+Run the generated userscript in isolated Chromium and Firefox using **npm run test:browser**. All traffic is intercepted and all content is synthetic. The fixture uses the production session adapter and runner. It shortens verification delays only for the uncertain/no-op cases and uses a one-second between-item preference. This proves the tested application behavior, not live Reddit compatibility or extension installation.
+
+For local development, install optional test tooling with **npm install --no-save --package-lock=false playwright**, then **npx playwright install chromium firefox**. The script also accepts REDDIT_TOOLBOX_PLAYWRIGHT_MODULE for an existing installation and REDDIT_TOOLBOX_BROWSER_OUTPUT for an evidence directory. Screenshots/results default to ignored artifacts/browser.
 
 | Flow | Chromium | Firefox |
 | --- | --- | --- |
-| Open → scan → review → confirm → automatic two-comment and mixed batches | Pass | Pass |
-| Session action token attached to mutations | Pass | Pass |
-| Second tab blocked; closed-panel completion; navigation warning; locked settings | Pass | Pass |
-| Reload does not resume; failed login invalidates review; account change clears stale history | Pass | Pass |
-| 50,000 archive rows with responsive import and 100 rendered rows per page | Pass | Pass |
-| Full-text review; pagination; keeping an item resets confirmation | Pass | Pass |
-| Signed-out archive review with Run disabled; sign in and prepare again | Pass | Pass |
-| Clear loaded history; backup disabled when review is cleared | Pass | Pass |
-| Light desktop, dark narrow layout, 320px containment, keyboard focus | Pass | Pass |
-| Console and runtime errors | None | None |
+| Find → automatic review → one Delete action; two comments and mixed content | Pass | Pass |
+| Null-author deletion; accepted deletion no longer returned by Reddit | Pass | Pass |
+| Lost response marks one item unconfirmed and continues the next | Pass | Pass |
+| Read-only recheck confirms the later result without another POST | Pass | Pass |
+| Acknowledged no-op retried once after fresh checks | Pass | Pass |
+| Header and launcher dragging, both resize corners, keyboard controls | Pass | Pass |
+| Persisted geometry, reset, narrow viewport clamping, compact footer access | Pass | Pass |
+| Filter updates and Keep immediately update the Delete count | Pass | Pass |
+| Cross-tab lock, closed-panel run, unload warning, settings lock, reload | Pass | Pass |
+| Account change/logout invalidation, local signed-out archive review | Pass | Pass |
+| 50,000-row responsive import, 100 rendered rows/page, pagination | Pass | Pass |
+| Light desktop/dark narrow rendering and keyboard focus | Pass | Pass |
+| Unexpected console/runtime errors | None | None |
 
-Screenshots were inspected for desktop and narrow layouts. Local evidence is retained in the project's handoff folder under work/browser-rc4.
+Local evidence is retained under work/browser-rc5 in the project handoff folder. The test's simulated lost response intentionally produces a browser network error.
 
-## Live and distribution acceptance
+## RC5 live coverage
 
-- [x] Existing RC3 installation observed in the owner's signed-in Chrome Reddit tab
-- [x] Owner completed RC4 update; installed version verified on the live Reddit tab
-- [x] Existing-login identity and profile scan against current Reddit
-- [x] Two owner comments: script-driven overwrite, read-back, deletion, and automatic advancement
-- [ ] Live direct-delete/read-back and recovery cases
-- [ ] Fresh Tampermonkey install in Chromium and Firefox
-- [x] RC4 main workflows and public install artifact checksum match
+- [ ] RC5 installed-version and current-login verification
+- [ ] Reproduce and verify recovery of the owner's specifically reported failing comment
+- [ ] Fresh Firefox Tampermonkey installation
 
-Implementation [e931e72](https://github.com/slaveofsolace/Reddit-Toolbox/commit/e931e728255dcd15297bf04ee2b8dc9a89ae9929) is on main. [CI](https://github.com/slaveofsolace/Reddit-Toolbox/actions/runs/33957277323) and [Build userscript](https://github.com/slaveofsolace/Reddit-Toolbox/actions/runs/33957277300) passed. The public install file matched the tested 128,763-byte artifact on 2026-09-05, SHA-256 `8812f4c4c459ed7d8913467699ec6f8a481cf6c61a45b17b2cb8ef1fecb77363`.
+The owner's older stalled tab could not be attached through the available browser tool. Its in-memory run was preserved. The reported exact failing comment has not yet been identified, so the recovery mechanisms are covered by synthetic fixtures and unit tests; they are not represented as a reproduction of that specific live failure.
+
+## Earlier live baseline (RC4)
 
 On 2026-09-05, the installed RC4 script detected the existing Reddit login and scanned the owner’s profile without OAuth or keys. After the owner confirmed the exact two-comment batch, one Run entire batch action completed both comments in 14 seconds. Each row reported completed · overwritten-and-deleted; final metrics were 2 processed, 2 deleted, 0 remaining, 0 failed, and 0 skipped. Run was disabled after completion.
 

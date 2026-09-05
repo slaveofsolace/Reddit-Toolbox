@@ -23,6 +23,7 @@
       this.busy = false;
       this.previewPage = 0;
       this.completionResetTimer = null;
+      this.previewRebuildTimer = null;
       this.beforeUnloadHandler = (event) => {
         const state = this.runner?.state;
         if (!['running', 'waiting', 'paused', 'stopping'].includes(state)) return;
@@ -49,6 +50,7 @@
       this.writeSettingsToForm();
       this.store.remove?.('oauth-client-id');
       this.refs.canonicalLink.hidden = globalThis.location?.origin === 'https://www.reddit.com';
+      this.window = new UI.ToolboxWindow(this);
       this.bindEvents();
       this.updateDateFields();
       this.refreshControls();
@@ -69,15 +71,14 @@
         fromField: $('.from-field'), throughField: $('.through-field'), maxItems: $('#max-items'),
         sortOrder: $('#sort-order'), keepSubreddits: $('#keep-subreddits'), keepScore: $('#keep-score'),
         textIncludes: $('#text-includes'), deleteUneditable: $('#delete-uneditable'),
-        replacementLength: $('#replacement-length'),
         minimumDelay: $('#minimum-delay'), maximumDelay: $('#maximum-delay'),
         scan: $('.scan'), importButton: $('.import'), archiveInput: $('.archive-input'),
-        buildPreview: $('.build-preview'), scanStatus: $('.scan-status'),
+        scanStatus: $('.scan-status'), previewSection: $('.preview-section'), runSection: $('.run-section'),
         foundCount: $('.found-count'), selectedCount: $('.selected-count'),
         commentCount: $('.comment-count'), postCount: $('.post-count'),
         previewCaption: $('.preview-caption'), preview: $('.preview'),
         exportBackup: $('.export-backup'), exportLog: $('.export-log'),
-        confirmationPhrase: $('.confirmation-phrase'), confirmationInput: $('.confirmation-input'),
+        batchSummary: $('.batch-summary'), runDetails: $('.run-details'), deleteNote: $('.delete-note'), unconfirmedCount: $('.unconfirmed-count'), recheck: $('.recheck'),
         processedCount: $('.processed-count'), remainingCount: $('.remaining-count'),
         failedCount: $('.failed-count'), currentCount: $('.current-count'),
         deletedCount: $('.deleted-count'), skippedCount: $('.skipped-count'), elapsedTime: $('.elapsed-time'),
@@ -100,22 +101,25 @@
       this.refs.scan.addEventListener('click', () => this.scanProfile());
       this.refs.importButton.addEventListener('click', () => this.refs.archiveInput.click());
       this.refs.archiveInput.addEventListener('change', (event) => this.importArchive(event.target.files));
-      this.refs.buildPreview.addEventListener('click', () => this.buildPreview());
       this.refs.exportBackup.addEventListener('click', () => this.exportBackup());
       this.refs.exportLog.addEventListener('click', () => this.exportLog());
-      this.refs.confirmationInput.addEventListener('input', () => this.refreshControls());
+      this.refs.recheck.addEventListener('click', () => this.recheckResults());
       this.refs.start.addEventListener('click', () => this.startRun());
       this.refs.pause.addEventListener('click', () => this.togglePause());
       this.refs.stop.addEventListener('click', () => this.stopRun());
       this.refs.retry.addEventListener('click', () => this.prepareRetryBatch());
 
       for (const input of this.shadow.querySelectorAll('input, select')) {
-        if (input === this.refs.archiveInput || input === this.refs.confirmationInput) continue;
+        if (input === this.refs.archiveInput) continue;
         const changed = () => {
           if (this.busy) return;
-          this.settings = this.readSettingsFromForm();
+          const nextSettings = this.readSettingsFromForm();
+          if (JSON.stringify(nextSettings) === JSON.stringify(this.settings)) return;
+          this.settings = nextSettings;
           this.store.set('settings', this.settings);
-          if (this.plan) this.invalidatePlan('Settings changed. Prepare the batch again.');
+          this.invalidatePlan();
+          clearTimeout(this.previewRebuildTimer);
+          if (this.allItems().length) this.previewRebuildTimer = setTimeout(() => this.buildPreview({ refreshSession: false }), 180);
         };
         input.addEventListener('change', changed);
         input.addEventListener('input', changed);
@@ -124,6 +128,7 @@
 
     open() {
       this.refs.panel.classList.add('open');
+      this.window?.apply();
       this.refs.launcher.setAttribute('aria-expanded', 'true');
       this.refs.close.focus();
     }
@@ -151,7 +156,6 @@
       this.refs.keepScore.value = settings.keepScoreAtOrAbove;
       this.refs.textIncludes.value = settings.textIncludes;
       this.refs.deleteUneditable.checked = settings.deleteUneditablePosts;
-      this.refs.replacementLength.value = settings.replacementLength;
       this.refs.minimumDelay.value = settings.minimumDelaySeconds;
       this.refs.maximumDelay.value = settings.maximumDelaySeconds;
     }
@@ -175,7 +179,7 @@
         textIncludes: this.refs.textIncludes.value,
         deleteUneditablePosts: this.refs.deleteUneditable.checked,
         verifyOverwrite: true,
-        replacementLength: Math.max(8, Math.min(128, Number(this.refs.replacementLength.value) || 24)),
+        replacementLength: 24,
         minimumDelaySeconds,
         maximumDelaySeconds,
         continueOnFailure: true,
@@ -190,7 +194,8 @@
     }
 
     allItems() {
-      return Reddit.mergeItems(this.profileItems, this.archiveItems);
+      const completed = this.removalServices.get(this.username.toLowerCase())?.states;
+      return Reddit.mergeItems(this.profileItems, this.archiveItems).filter(item => !completed?.get(item.fullname)?.completed);
     }
 
     ensureClient() {
@@ -203,10 +208,12 @@
       this.busy = true;
       this.refreshControls();
       this.setStatus(this.refs.accountStatus, 'Checking this tab’s Reddit login…');
+      let checked = false;
       try {
         const session = await this.ensureClient().getSession();
         if (this.username && !Reddit.sameUsername(this.username, session.username)) this.clearLoadedData();
         this.showAccount(session.username);
+        checked = true;
       } catch (error) {
         this.invalidatePlan();
         this.setStatus(this.refs.accountStatus, UI.compactError(error), 'error');
@@ -214,11 +221,12 @@
         this.busy = false;
         this.refreshControls();
       }
+      if (checked && !this.plan?.startedAt && (this.profileItems.length || this.archiveItems.length)) await this.buildPreview({ refreshSession: false });
     }
 
     showAccount(username) {
       this.username = username;
-      this.setStatus(this.refs.accountStatus, username ? 'Signed in as u/' + username : 'Local review · sign in to Reddit and prepare again to enable cleanup.', username ? 'success' : '');
+      this.setStatus(this.refs.accountStatus, username ? 'Signed in as u/' + username : 'Local review · sign in to Reddit, then check login.', username ? 'success' : '');
     }
 
     clearLoadedData() {

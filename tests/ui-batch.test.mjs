@@ -17,12 +17,11 @@ const { UI } = loadToolbox({
   ]
 });
 
-test('batch UI requires one confirmation and no per-item clicks', () => {
-  assert.match(UI.staticMarkup, /One confirmation starts the entire selected batch/);
-  assert.match(UI.staticMarkup, /No per-item clicks are required/);
-  assert.match(UI.staticMarkup, /Run entire batch/);
-  assert.match(UI.staticMarkup, /continues while this panel is closed/);
-  assert.doesNotMatch(UI.staticMarkup, /deletes it one item at a time/i);
+test('review leads directly to a clearly labeled delete action without typed confirmation', () => {
+  assert.match(UI.staticMarkup, /Find matching items/);
+  assert.match(UI.staticMarkup, /Delete selected items/);
+  assert.match(UI.staticMarkup, /Deletion is permanent/);
+  assert.doesNotMatch(UI.staticMarkup, /confirmation-input|Prepare batch|replacement-length/);
 });
 
 test('batch UI exposes progress, pause, stop, and retry controls', () => {
@@ -31,7 +30,8 @@ test('batch UI exposes progress, pause, stop, and retry controls', () => {
   assert.equal(UI.batchPhaseLabel('overwriting'), 'Overwriting the original text');
   assert.match(UI.staticMarkup, /processed-count/);
   assert.match(UI.staticMarkup, /remaining-count/);
-  assert.match(UI.staticMarkup, /Prepare retry batch/);
+  assert.equal(typeof UI.RedditToolboxApp.prototype.recheckResults, 'function');
+  assert.match(UI.staticMarkup, /Recheck results/);
 });
 
 test('active batches warn before the tab unloads', () => {

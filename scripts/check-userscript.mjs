@@ -22,8 +22,9 @@ const required = [
   'class BatchRunner',
   'class RedditRemovalService',
   'class RedditToolboxApp',
-  'One confirmation starts the entire selected batch',
-  'Run entire batch',
+  'class ToolboxWindow',
+  'Find matching items',
+  'Recheck results',
   'toolbox.App.start()'
 ];
 

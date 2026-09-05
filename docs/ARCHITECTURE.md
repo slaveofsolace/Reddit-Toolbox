@@ -22,7 +22,7 @@ src/main.js     product bootstrap
 | Isolate platform requests | `src/reddit/api.js` |
 | Coordinate overwrite and deletion | `src/reddit/removal-service.js` |
 | Persist only safe preferences | `src/core/storage.js` |
-| Present Scope → Review → Confirm once → Automate | `src/ui/*` |
+| Present scope → find and review → Delete | `src/ui/*` |
 
 ## Automated batch model
 
@@ -35,7 +35,7 @@ A reviewed plan has `mode: automated-batch` and contains a fixed ordered list. I
 - overwrite verification and replacement length;
 - continuation and consecutive-failure policy.
 
-After the user types the single plan confirmation, one `BatchRunner.run(plan)` call processes every queued item. The user does not confirm, click, or advance individual rows.
+After the user selects the explicit Delete button for that review, one `BatchRunner.run(plan)` call processes every queued item. The user does not confirm, click, or advance individual rows.
 
 The short digest is a display identifier. Validation also compares the complete canonical binding retained in a private in-memory map, so digest collisions cannot authorize a different batch. Target snapshots and execution options are frozen when execution begins. Deserialized plans are not authorized after reload.
 
@@ -49,7 +49,7 @@ ready
   ↔ waiting       pacing, retry backoff, or Reddit rate limit
   ↔ paused        user pause or explicit attention requirement
   → stopping      finish the current operation safely
-  → stopped | completed
+  → stopped | completed | completed-with-failures
 ```
 
 The runner publishes whole-batch progress, current item, item phase, processed count, remaining count, failures, and wait countdowns. Closing the toolbox panel does not stop the active JavaScript run. The compact launcher displays progress and signals attention.
@@ -84,7 +84,7 @@ The removal service retains per-account, per-fullname mutation state for the lif
 - Retryable transport or server failures use bounded automatic backoff.
 - An isolated permanent item failure is recorded and the next item starts automatically.
 - Five consecutive failures pause the batch for operator review.
-- Authentication changes, account changes, challenges, forbidden requests, and uncertain delete results pause the batch.
+- Authentication changes, account changes, challenges, forbidden requests, and uncertain overwrites pause the batch. Unconfirmed deletions are recorded separately and the next item continues.
 - Stop finishes the current in-flight item boundary, marks untouched items as stopped, and allows one retry batch to be prepared.
 - Reloading never reconstructs or resumes an active destructive run.
 
@@ -100,14 +100,25 @@ verifyOwnership(fullname)          bind the target to the expected account
 edit(fullname, text)               save replacement text
 verifyText(fullname, expected)     confirm the overwrite
 remove/full delete(fullname)       platform deletion operation
-isDeleted(fullname)                verify the final state
+getDeletionStatus(fullname)        distinguish deleted, missing, and present exact targets
+isDeleted(fullname)                strict deleted-marker convenience check
 ```
 
 `RedditRemovalService` is the only layer that coordinates destructive transitions. `BatchRunner` knows nothing about Reddit and can be reused by another toolbox.
 
 ## Uncertain outcomes
 
-A lost response, malformed response, or HTTP 5xx after an edit or delete is ambiguous. After an edit, the service reads back the original replacement. If that cannot be verified, it pauses without resending. After a delete, it records that the request may have been sent and verifies the final state. It never sends that deletion a second time automatically. Missing, malformed, or mismatched item listings do not prove deletion. Unresolved results pause for attention.
+A lost response, malformed response, or HTTP 5xx after an edit or delete is ambiguous. After an edit, the service reads back the original replacement. If that cannot be verified, it pauses without resending. After a delete, it records that the request may have been sent and verifies the final state. A lost deletion response is never automatically resent.
+
+Deletion verification uses up to six reads with increasing delays. An explicit deleted author/text pair (including a null author) or Reddit's deleted category establishes a deleted marker. Moderation removal does not. Alternatively, a successfully acknowledged deletion of a target whose ownership was verified can be confirmed by two consecutive valid exact-target listings that no longer return it. Missing data without that prior acknowledgement and ownership evidence, malformed responses, and mismatched IDs do not establish deletion.
+
+Reddit can acknowledge a no-op. If repeated reads still show the same owned target with the exact saved replacement, the service revalidates the account, ownership, editability, and replacement at the mutation boundary, then retries deletion once. Uncertain requests do not qualify for this retry.
+
+Unresolved results become terminal `unconfirmed` queue rows, counted as processed but never as deleted or generic retry candidates. Other items continue. **Recheck results** performs read-only verification and can promote a row to completed; it sends no mutation. This state remains in memory for the current tab only.
+
+## Window and review
+
+The scan and archive import produce a review automatically. Filter changes invalidate the old review immediately and rebuild it after a short debounce. The Delete button is the single explicit batch authorization; targets and account binding remain validated and frozen. Window and launcher pointer controls, keyboard controls, viewport clamping, and preference-only geometry storage live in `src/ui/window.js`.
 
 ## Build
 

@@ -15,7 +15,9 @@
 
       this.busy = true;
       this.refreshControls();
-      this.setStatus(this.refs.scanStatus, 'Connecting to the signed-in Reddit session…');
+      this.invalidatePlan();
+      let scanned = false;
+      this.setStatus(this.refs.scanStatus, 'Finding your history…');
       try {
         const scanner = new Reddit.RedditScanner(this.ensureClient(), {
           onProgress: ({ kind, pages, count, after }) => {
@@ -29,6 +31,7 @@
         });
         if (this.username && !Reddit.sameUsername(this.username, result.username)) this.clearLoadedData();
         this.profileItems = result.items;
+        scanned = true;
         this.showAccount(result.username);
         this.coverage = result.report;
         this.invalidatePlan();
@@ -42,11 +45,16 @@
         this.busy = false;
         this.refreshControls();
       }
+      if (scanned) {
+        await this.buildPreview({ refreshSession: false });
+        if (this.plan) this.refs.previewSection.scrollIntoView({ block: 'start' });
+      }
     }
 
     async importArchive(fileList) {
       if (this.busy) return;
       const files = Array.from(fileList || []);
+      let importedSuccessfully = false;
       if (!files.length) return;
       this.busy = true;
       this.refreshControls();
@@ -61,6 +69,7 @@
           messages.push(`${file.name}: ${result.items.length} accepted, ${result.rejected} rejected, ${result.duplicates} duplicates`);
         }
         this.archiveItems = Reddit.mergeItems(this.archiveItems, imported);
+        importedSuccessfully = true;
         this.invalidatePlan();
         this.setStatus(
           this.refs.scanStatus,
@@ -75,9 +84,13 @@
         this.refs.archiveInput.value = '';
         this.refreshControls();
       }
+      if (importedSuccessfully) {
+        await this.buildPreview();
+        if (this.plan) this.refs.previewSection.scrollIntoView({ block: 'start' });
+      }
     }
 
-    async buildPreview() {
+    async buildPreview(options = {}) {
       if (this.busy) return;
       this.busy = true;
       this.refreshControls();
@@ -85,10 +98,10 @@
         this.settings = this.readSettingsFromForm();
         this.store.set('settings', this.settings);
         const allItems = this.allItems();
-        if (!allItems.length) throw new Error('Scan your profile or import Reddit archive CSV files first.');
+        if (!allItems.length && !this.coverage && !this.archiveItems.length) throw new Error('Find matching items or import an archive first.');
         const client = this.ensureClient();
         let session;
-        try { session = await client.getSession(); }
+        try { session = options.refreshSession === false ? { username: this.username } : await client.getSession(); }
         catch (error) {
           if (!(error instanceof Core.AuthError) || this.profileItems.length) throw error;
           session = { username: '' };
@@ -105,11 +118,10 @@
         });
         this.plan = Core.createPlan(selection.selected, { ...this.settings, accountId: this.username.toLowerCase() });
         this.plan.selectionSkipped = selection.skipped;
-        this.refs.confirmationInput.value = '';
         this.renderPlan();
         this.setStatus(
           this.refs.scanStatus,
-          `${selection.selected.length} selected${this.username ? ' for one automated batch' : ' for local review; sign in to Reddit and prepare again to enable cleanup'}; ${Object.values(selection.skipped).reduce((sum, count) => sum + count, 0)} excluded by filters.`,
+          `${selection.selected.length} selected${this.username ? '' : ' for local review; sign in to Reddit, then check login'} · ${Object.values(selection.skipped).reduce((sum, count) => sum + count, 0)} excluded by filters.`,
           'success'
         );
       } catch (error) {
@@ -124,14 +136,13 @@
     invalidatePlan(message = '') {
       this.plan = null;
       this.refs.previewNavigation.hidden = true;
-      this.refs.confirmationInput.value = '';
-      this.refs.confirmationPhrase.textContent = 'DELETE 0 ITEMS';
       this.refs.selectedCount.textContent = '0';
       this.refs.commentCount.textContent = '0';
       this.refs.postCount.textContent = '0';
       this.refs.processedCount.textContent = '0';
       this.refs.remainingCount.textContent = '0';
       this.refs.failedCount.textContent = '0';
+      this.refs.unconfirmedCount.textContent = '0';
       this.refs.deletedCount.textContent = '0';
       this.refs.skippedCount.textContent = '0';
       this.refs.elapsedTime.textContent = '0s';
@@ -172,19 +183,19 @@
       const preserved = [filters.keepSubreddits.length ? `keep ${filters.keepSubreddits.map((name) => `r/${name}`).join(', ')}` : '',
         filters.keepScoreAtOrAbove !== null ? `keep score ≥ ${filters.keepScoreAtOrAbove}` : '',
         filters.textIncludes ? 'text filter active' : ''].filter(Boolean).join('; ');
-      this.refs.previewCaption.textContent = `${this.plan.options.accountId ? `u/${this.plan.options.accountId}` : 'Local review · not signed in'} · ${source}${incomplete ? ' (listing limited)' : ''}. ${editable} overwrite then delete; ${uneditable} ${this.plan.options.deleteUneditablePosts ? 'direct delete' : 'will skip'}. ${span}; ${filters.sortOrder} first. ${preserved ? `${preserved}. ` : ''}Lifetime completeness is not established.`;
-      this.refs.confirmationPhrase.textContent = this.plan.options.accountId ? this.plan.confirmation : 'Sign in to Reddit, then prepare again';
+      this.refs.previewCaption.textContent = `${source}${incomplete ? ' · listing limited' : ''} · ${span}. ${editable} overwrite then delete${uneditable ? `; ${uneditable} ${this.plan.options.deleteUneditablePosts ? 'direct delete' : 'will skip'}` : ''}.${preserved ? ` Keeping: ${preserved}.` : ''}`;
       this.refs.preview.replaceChildren();
       this.refs.processedCount.textContent = '0';
       this.refs.remainingCount.textContent = String(contents.length);
       this.refs.failedCount.textContent = '0';
+      this.refs.unconfirmedCount.textContent = '0';
       this.refs.deletedCount.textContent = '0';
       this.refs.skippedCount.textContent = '0';
       this.refs.elapsedTime.textContent = '0s';
       this.refs.currentCount.textContent = '—';
       this.refs.currentAction.textContent = 'Ready to run the selected batch automatically.';
       this.setStatus(this.refs.runStatus, contents.length
-        ? `Ready · one confirmation will process all ${contents.length} selected items.`
+        ? (this.plan.options.accountId ? 'Delete applies to the reviewed selection.' : 'Sign in to Reddit, then check login in More options.')
         : 'No matching items.');
 
       this.previewPage = 0;
@@ -200,10 +211,9 @@
       if (!this.plan || this.busy || this.plan.startedAt) return;
       const page = this.previewPage;
       this.plan = Core.createPlan(this.plan.items.filter((item) => item.id !== id).map((item) => item.content), this.plan.options);
-      this.refs.confirmationInput.value = '';
       this.renderPlan();
       this.renderPreviewPage(page);
-      this.setStatus(this.refs.runStatus, 'Item kept. Review the remaining batch and enter its updated confirmation.');
+      this.setStatus(this.refs.runStatus, 'Item kept. The Delete button now applies to the remaining selection.');
     }
 
     renderPreviewPage(page = 0) {
@@ -241,7 +251,7 @@
           const fullText = document.createElement('details');
           fullText.className = 'item-text';
           const textSummary = document.createElement('summary');
-          textSummary.textContent = 'Read full text';
+          textSummary.textContent = 'Full text';
           const textBody = document.createElement('div');
           textBody.textContent = [item.title, item.text].filter(Boolean).join('\n\n') || 'No editable text in this record.';
           fullText.append(textSummary, textBody);
@@ -268,7 +278,7 @@
           const keep = document.createElement('button');
           keep.className = 'button keep-item';
           keep.type = 'button';
-          keep.textContent = 'Keep this item';
+          keep.textContent = 'Keep';
           keep.disabled = Boolean(this.busy || this.plan.startedAt);
           keep.addEventListener('click', () => this.excludeFromPlan(queueItem.id));
           actions.append(keep);

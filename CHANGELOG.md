@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.0-rc.5 — 2026-09-05
+
+- Collapse scanning and preparation into Find matching items, automatically rebuild filtered reviews, and use one explicit Delete button without a typed phrase. Move less-used settings into More options.
+- Add draggable header and launcher, two resize handles, keyboard movement/resizing, saved geometry, viewport clamping, and reset layout. Keep progress and run controls visible while history scrolls.
+- Expand deletion verification for null-author and deleted-category tombstones, plus acknowledged deletions followed by repeated valid absent-item reads. Preserve rejection of moderation removal, malformed listings, and missing data alone.
+- Allow more read-back time and retry an acknowledged no-op once after fresh ownership, account, editability, and replacement verification. Never blindly resend a lost deletion response.
+- Mark unresolved deletion results separately, continue other items, and offer read-only rechecks. Exclude completed items from later selections and correct launcher status for unconfirmed results.
+- Reject explicit Reddit error envelopes even when HTTP status is 200. Add deletion recovery and window geometry regressions.
+
 ## 1.0.0-rc.4 — 2026-09-05
 
 - Make the existing Reddit browser session the default and only production connection. Scan and run without app registration, OAuth, a client ID, or an API key.

@@ -4,7 +4,7 @@
 
 No OAuth setup, app registration, client ID, API key, backend, or companion app. Reddit Toolbox uses the Reddit login already active in your browser tab.
 
-Choose comments and posts, review a finite batch, confirm once, and let it run. Editable bodies are overwritten with random letters, checked, then deleted. Closing the panel leaves the batch running and the floating RT button shows progress.
+Choose comments and posts, review the matches, select Delete, and let it run. Editable bodies are overwritten with random letters, checked, then deleted. Closing the panel leaves the batch running and the floating RT button shows progress.
 
 ## Install
 
@@ -12,30 +12,30 @@ Choose comments and posts, review a finite batch, confirm once, and let it run. 
 2. Open **[Install Reddit Toolbox](https://raw.githubusercontent.com/slaveofsolace/Reddit-Toolbox/main/userscripts/reddit-toolbox.user.js)** and choose **Install**.
 3. Open [www.reddit.com](https://www.reddit.com/), sign in, and select **RT**.
 
-RC4 uses the existing Reddit session. It passed 73 automated tests, Chromium/Firefox browser fixtures, and a live two-comment overwrite-and-delete batch through the installed Chrome userscript. Broader live acceptance is tracked separately. See the [acceptance checklist](docs/RELEASE_CHECKLIST.md).
+RC5 simplifies cleanup and adds a movable, resizable window and deletion recovery. It passes 83 automated tests. Current browser and live coverage are recorded in the [acceptance checklist](docs/RELEASE_CHECKLIST.md).
 
 ## Clean up
 
-Open RT on **www.reddit.com**. **Scan history** automatically checks your existing login; **Check Reddit login** is an optional status check. [How the session works](docs/API_ACCESS.md).
+Open RT on **www.reddit.com**. Your existing login is detected automatically. [How the session works](docs/API_ACCESS.md).
 
-1. Select content types, inclusive dates, an amount, and processing order.
-2. Scan your profile or import Reddit's `comments.csv` and `posts.csv` locally.
-3. Select **Prepare batch**. Review the account, actions, and every page of selected items. Use **Keep this item** to remove an item from this batch.
-4. Optionally export the selected content, then type the batch confirmation once.
-5. Select **Run entire batch**. It advances automatically without per-item clicks.
+1. Choose comments, posts, dates, and an optional limit. Select **Find matching items**.
+2. Review the matches. **Keep** excludes individual items; **Save a copy** exports the selection. Select **Delete N items** to start the reviewed batch.
 
-Archive import and paginated review also work while signed out. Sign in normally and prepare again to bind the batch to that account before running it.
+There is no typed phrase, separate preparation button, or per-item confirmation. Changing a filter updates the review automatically. Refresh history to fetch new records. **More options** holds subreddit and score protection, text matching, pacing, local archive import, login status, and history clearing.
 
-Advanced controls include subreddit exclusions, score protection, text matching, random replacement length, and pacing. When a protected archive field is unknown, the item is retained. Link/media posts have no editable body and are skipped unless direct deletion is explicitly enabled; post titles are never described as overwritten.
+Drag the header to move the window; drag either bottom corner to resize it. The RT launcher can also be moved. Size and position are remembered. The header reset button restores the default layout. Keyboard users can focus the move or resize handle and use arrow keys; hold Shift for larger changes.
+
+Archive import and paginated review work while signed out. After signing in normally, **Check login** binds the local review to that account. Unknown protected archive fields are retained. Link/media posts are skipped unless **Also delete link and media posts** is enabled; their bodies cannot be overwritten, and post titles stay unchanged.
 
 ## Controls and recovery
 
-- **Pause batch** holds before the next mutation. **Stop after current item** lets the current item settle, then stops the remainder.
-- **Prepare retry batch** collects failed and stopped items into a new review. Completed work and uncertain mutations are remembered for this tab.
-- Account and ownership are checked again before mutations. Saved replacement text must match before deletion.
-- Requests are serialized and paced. Rate-limit waits and bounded retries run automatically; repeated failures or uncertain outcomes require attention.
-- Cleanup uses **www.reddit.com** and requires Web Locks to exclude concurrent batches. Other supported Reddit origins show the launcher and can review local archives.
-- Reloading clears the reviewed batch and active run; your ordinary Reddit login remains managed by Reddit. Nothing resumes destructively on reload.
+- **Pause** holds before the next mutation. **Stop** finishes the current item, then stops the remainder.
+- **Review retries** collects failed and stopped items into a new review. Completed items are excluded from later selections in this tab.
+- A deletion is counted only after a deleted marker, or an accepted deletion of a verified owned item followed by two consecutive valid reads that no longer return it. Missing data alone is insufficient.
+- If an accepted deletion leaves the same owned, overwritten item present, the script verifies the account, ownership, and replacement again before one bounded retry. A lost response is never blindly resent.
+- Unconfirmed deletions are marked **Needs recheck** and the batch continues. **Recheck results** performs reads only. These items are never counted as deleted until verified.
+- Account/ownership changes, challenges, and uncertain overwrites still require attention. Rate-limit waits are automatic; requests remain serialized and paced.
+- Cleanup uses **www.reddit.com** and a Web Lock excludes concurrent batches. Reloading clears the run and never resumes deletion automatically.
 
 Profile listings can omit older history. Archives broaden discovery but do not establish lifetime completeness. Overwriting/deleting cannot erase third-party copies or guarantee Reddit's internal retention.
 

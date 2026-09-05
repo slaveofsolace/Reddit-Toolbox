@@ -1,53 +1,44 @@
 # Installation
 
-Install the single RC4 userscript. Your normal Reddit login is the only account setup.
+Install the single RC5 userscript. Your normal Reddit login is the only account setup.
 
-## Install the userscript
+## Install
 
-1. Install [Tampermonkey](https://www.tampermonkey.net/) for a supported desktop browser.
-2. Chrome users must open `chrome://extensions/?id=dhdgffkkebhmkfjojejmpbldmpobfkfo` and enable **Allow User Scripts**.
-3. Open [reddit-toolbox.user.js](https://raw.githubusercontent.com/slaveofsolace/Reddit-Toolbox/main/userscripts/reddit-toolbox.user.js).
-4. Review the Tampermonkey metadata, then select **Install**.
-5. Sign in to Reddit and reload the tab.
-6. Select the orange **RT** launcher. The Tampermonkey menu also includes **Open Reddit Toolbox**.
+1. Install [Tampermonkey](https://www.tampermonkey.net/) and follow its prompt to enable userscripts if needed.
+2. Open [Install Reddit Toolbox](https://raw.githubusercontent.com/slaveofsolace/Reddit-Toolbox/main/userscripts/reddit-toolbox.user.js) and select **Install**.
+3. Sign in normally at [www.reddit.com](https://www.reddit.com/), reload the tab, and open **RT**.
 
-## Use your existing login
+No registered app, OAuth authorization, client ID, or API key is needed. [Session details](API_ACCESS.md).
 
-Open **www.reddit.com**, sign in normally, and select **RT**. **Scan history** automatically detects the current account. No registered app, OAuth authorization, client ID, or API key is needed. [Session details](API_ACCESS.md).
+## Clean up
 
-## Prepare broader history
+1. Choose comments, posts, dates, an optional limit, and order. Select **Find matching items**.
+2. Review the matches. **Keep** excludes a row and **Save a copy** exports the selection. Select **Delete N items** to start.
 
-The profile scan retrieves history exposed by Reddit's profile listings. For older content:
+Editable bodies are overwritten, read back, deleted, and verified automatically. Deletion is permanent. There is no typed phrase, separate preparation step, or per-item confirmation. Filter changes update the review automatically.
 
-1. Request your Reddit data from `https://www.reddit.com/settings/data-request`.
-2. Download and extract the archive when Reddit makes it available.
-3. In Reddit Toolbox, choose **Import archive CSV**.
-4. Select `comments.csv`, `posts.csv`, or both.
+**More options** contains subreddit and score protection, text matching, pacing, archive import, login status, and history clearing. Link/media posts have no editable body and are skipped unless **Also delete link and media posts** is enabled. Titles stay unchanged.
 
-The archive is read locally and is not uploaded by Reddit Toolbox.
+## Move and resize
 
-## Run an automated cleanup
+Drag the header to move the panel, or either bottom corner to resize it. Drag the RT launcher to reposition it. Layout is saved automatically; the header reset button restores the default. Focus a move/resize handle and use arrow keys for keyboard control; Shift moves farther.
 
-1. Select comments, posts, or both.
-2. Set the date window, maximum amount, ordering, and any exclusions.
-3. Select **Scan history** or import archive CSV files.
-4. Select **Prepare batch** and review every page of selected rows. Use **Keep this item** to exclude an item from this batch; the confirmation resets.
-5. Export the selected content before deleting anything important.
-6. Type the displayed confirmation once.
-7. Select **Run entire batch**.
+The footer keeps Delete, progress, and run controls accessible while the history scrolls. Closing the panel leaves the batch running and the launcher shows its progress. Keep the Reddit tab open; reloading ends the in-memory run and never resumes deletion automatically.
 
-No per-item confirmation is required. The toolbox automatically advances through the complete reviewed batch. It waits through rate limits, retries temporary failures, and continues after isolated item failures.
+## Recovery
 
-The panel may be closed during the run. The orange launcher becomes a progress indicator and signals when attention is required. Keep the Reddit tab open; a reload or full navigation ends the in-memory run and never resumes it automatically.
+**Pause** holds before the next mutation. **Stop** finishes the current item and stops the remainder. **Review retries** collects failed and stopped items into another review.
 
-Use **Pause batch** to hold before the next operation boundary. Use **Stop after current item** to let the active item settle and stop the remainder. Then use **Prepare retry batch** to collect failed and stopped items into one new reviewed batch.
+Unconfirmed deletion results show **Needs recheck**, remain separate from deleted counts, and allow other items to continue. **Recheck results** performs read-only verification. See [the result rules](ARCHITECTURE.md#uncertain-outcomes).
 
-Link and media posts have no editable body. They are skipped unless **Delete link/media posts directly** is enabled before the batch is prepared.
+## Include older history
 
-## Update
+Profile listings can omit older content. Request your data from Reddit's settings, download and extract the archive, then use **More options → Import archive CSV** to select comments.csv, posts.csv, or both. Import automatically builds a paginated review. Files are parsed locally and are not uploaded by this tool.
 
-Tampermonkey checks the userscript’s `@updateURL`. You can also reopen the install link and choose **Update**. RC4 keeps the same name and namespace, raises the version, and removes RC3’s cross-origin network permissions. Reload existing Reddit tabs after updating; an already running tab still contains its previous script until reload. Any saved RC3 public client ID is removed on first mount.
+Signed-out archive review is available. Sign in normally, then select **Check login** in More options to enable deletion for that account.
 
-## Remove
+## Update or remove
 
-Open the Tampermonkey dashboard and delete **Reddit Toolbox**. Removing the script does not reverse completed Reddit edits or deletions.
+Reopen the install link and select **Update**, or let Tampermonkey use the script's update URL. RC5 keeps the same name, namespace, and permissions as RC4. Reload Reddit after an update to use the new version; finish or stop any old run first because a reload discards its in-memory progress.
+
+To uninstall, remove **Reddit Toolbox** through Tampermonkey. Uninstalling cannot reverse completed Reddit edits or deletions.

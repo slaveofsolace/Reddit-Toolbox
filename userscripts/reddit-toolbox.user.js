@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Toolbox
 // @namespace    https://github.com/slaveofsolace
-// @version      1.0.0-rc.4
+// @version      1.0.0-rc.5
 // @description  Automatically overwrite and delete selected Reddit posts and comments in one reviewed batch.
 // @author       slaveofsolace
 // @license      MIT
@@ -27,13 +27,13 @@
 
   const family = globalThis.ToolboxFamily || {};
   family.Core ||= {};
-  family.version = '1.0.0-rc.4';
+  family.version = '1.0.0-rc.5';
 
   const toolbox = globalThis.RedditToolbox || {};
   toolbox.Core = family.Core;
   toolbox.Reddit ||= {};
   toolbox.UI ||= {};
-  toolbox.version = '1.0.0-rc.4';
+  toolbox.version = '1.0.0-rc.5';
 
   globalThis.ToolboxFamily = family;
   globalThis.RedditToolbox = toolbox;
@@ -536,6 +536,7 @@
       completed: 0,
       skipped: 0,
       failed: 0,
+      unconfirmed: 0,
       stopped: 0,
       processed: 0,
       remaining: 0,
@@ -544,7 +545,7 @@
     for (const item of plan?.items || []) {
       summary[item.status] = (summary[item.status] || 0) + 1;
     }
-    summary.processed = summary.completed + summary.skipped + summary.failed;
+    summary.processed = summary.completed + summary.skipped + summary.failed + summary.unconfirmed;
     summary.remaining = summary.ready + summary.processing + summary.stopped;
     summary.percent = summary.total
       ? Math.min(100, Math.round((summary.processed / summary.total) * 100))
@@ -626,7 +627,7 @@
         this.summary[item.status] -= 1;
         this.summary[status] += 1;
         const summary = this.summary;
-        summary.processed = summary.completed + summary.skipped + summary.failed;
+        summary.processed = summary.completed + summary.skipped + summary.failed + summary.unconfirmed;
         summary.remaining = summary.ready + summary.processing + summary.stopped;
         summary.percent = summary.total ? Math.round(summary.processed / summary.total * 100) : 0;
       }
@@ -736,6 +737,14 @@
           this.emit('item-finished', { queueItem, index, total });
           return;
         } catch (error) {
+          if (error?.code === 'DELETE_RESULT_UNCERTAIN') {
+            queueItem.error = { code: error.code, message: error.message };
+            this.setItemStatus(queueItem, 'unconfirmed');
+            queueItem.phase = 'unconfirmed';
+            queueItem.finishedAt = new Date().toISOString();
+            this.emit('item-unconfirmed', { queueItem, error, index, total });
+            return;
+          }
           if (error?.pauseRequired) {
             this.pause(error.message || 'Reddit needs attention before the batch can continue.');
             this.emit('attention-required', { queueItem, error, index, total });
@@ -877,7 +886,7 @@
         this.state = 'stopped';
         this.emit('batch-stopped', { plan });
       } else {
-        plan.status = this.summary.failed ? 'completed-with-failures' : 'completed';
+        plan.status = this.summary.failed || this.summary.unconfirmed ? 'completed-with-failures' : 'completed';
         this.state = plan.status;
         this.emit('batch-completed', { plan });
       }
@@ -1200,6 +1209,14 @@
         });
       }
 
+      if (payload?.success === false || payload?.error) {
+        const status = Number(payload.error);
+        if (status === 401) throw new Core.AuthError();
+        if (status === 403) throw new Core.PauseRequiredError('Reddit rejected this request. Check the account notice on the page.', { code: 'REDDIT_FORBIDDEN', status });
+        if (status === 429) throw new Core.RateLimitError('Reddit asked the tool to slow down.', retryAfterMilliseconds(response));
+        throw new Core.ApiError('Reddit rejected the operation.', { code: 'REDDIT_REJECTED' });
+      }
+
       const errors = apiErrors(payload);
       if (errors.length) {
         const first = errors[0];
@@ -1374,12 +1391,24 @@
       return String(actual ?? '') === String(expected);
     }
 
-    async isDeleted(fullname) {
+    async getDeletionStatus(fullname) {
       const child = await this.getThing(fullname);
-      if (!child) return false;
-      const author = String(child.data?.author || '').toLowerCase();
-      const text = String(child.kind === 't1' ? child.data?.body ?? '' : child.data?.selftext ?? '').toLowerCase();
-      return author === '[deleted]' && ['', '[deleted]'].includes(text);
+      if (!child) return { status: 'missing' };
+      const data = child.data;
+      const text = String(child.kind === 't1' ? data.body ?? '' : data.selftext ?? '');
+      const deletedAuthor = data.author === null || String(data.author).toLowerCase() === '[deleted]';
+      const deleted = data.removed_by_category === 'deleted'
+        || (deletedAuthor && ['', '[deleted]'].includes(text.trim().toLowerCase()));
+      return {
+        status: deleted ? 'deleted' : 'present',
+        owned: Boolean(this.username && sameUsername(data.author, this.username)),
+        editable: child.kind === 't1' || data.is_self === true,
+        text
+      };
+    }
+
+    async isDeleted(fullname) {
+      return (await this.getDeletionStatus(fullname)).status === 'deleted';
     }
 
     async delete(fullname) {
@@ -1511,6 +1540,7 @@
       this.maximumSettleMs = Math.max(this.minimumSettleMs, Number(options.maximumSettleMs) || 1_500);
       this.verificationAttempts = Math.max(1, Math.min(5, Math.trunc(Number(options.verificationAttempts) || 3)));
       this.verificationDelayMs = Math.max(100, Number(options.verificationDelayMs) || 750);
+      this.deletionVerificationAttempts = Math.max(2, Math.min(8, Number(options.deletionVerificationAttempts) || 6));
       this.sleep = options.sleep || Core.wait;
       this.random = options.random || Math.random;
       this.randomSource = options.randomSource || globalThis.crypto;
@@ -1529,7 +1559,9 @@
           replacement: '',
           editSent: false,
           edited: false,
-          deleteSent: false
+          deleteSent: false,
+          deleteAcknowledged: false,
+          deleteAttempts: 0
         });
       }
       return this.states.get(fullname);
@@ -1562,6 +1594,7 @@
         const target = await this.client.inspectTarget(item.fullname);
         if (!target.available || !target.owned) throw new Core.ApiError('Ownership could not be verified.', { code: 'OWNERSHIP_NOT_VERIFIED' });
         if (target.editable !== (item.editable !== false)) throw new Core.ApiError('Live editability differs from the reviewed batch. Prepare a new review.', { code: 'EDITABILITY_CHANGED' });
+        state.ownershipVerified = true;
         return;
       }
       if (typeof this.client.verifyOwnership !== 'function') {
@@ -1577,23 +1610,69 @@
       state.ownershipVerified = true;
     }
 
-    async verifyDeleted(item, state) {
+    async verifyDeleted(item, state, context = {}, allowResend = true) {
       if (!this.verifyDeletion) return true;
-      if (typeof this.client.isDeleted !== 'function') {
+      await this.ensureSession();
+      if (typeof this.client.isDeleted !== 'function' && typeof this.client.getDeletionStatus !== 'function') {
         throw new Core.PauseRequiredError(
           'The delete request was sent, but this adapter cannot verify the result.',
           { code: 'DELETE_RESULT_UNVERIFIED' }
         );
       }
-      const deleted = await this.verifyWithRetries(() => this.client.isDeleted(item.fullname));
-      if (!deleted) {
-        throw new Core.PauseRequiredError(
-          'The delete request was sent, but Reddit has not confirmed the result. Inspect the item before resuming.',
-          { code: 'DELETE_RESULT_UNCERTAIN' }
-        );
+      let missingReads = 0;
+      let presentReads = 0;
+      let last;
+      for (let attempt = 0; attempt < this.deletionVerificationAttempts; attempt += 1) {
+        last = typeof this.client.getDeletionStatus === 'function'
+          ? await this.client.getDeletionStatus(item.fullname)
+          : { status: await this.client.isDeleted(item.fullname) ? 'deleted' : 'unknown' };
+        missingReads = last.status === 'missing' ? missingReads + 1 : 0;
+        presentReads = last.status === 'present' && last.owned ? presentReads + 1 : 0;
+        if (last.status === 'deleted'
+          || (missingReads >= 2 && state.deleteAcknowledged && state.ownershipVerified)) {
+          state.completed = true;
+          state.deletionEvidence = last.status === 'deleted' ? 'deleted-marker' : 'accepted-and-no-longer-returned';
+          return true;
+        }
+        if (context.isStopRequested?.()) break;
+        if (attempt + 1 < this.deletionVerificationAttempts) {
+          this.report(context, 'verifying-deletion', { attempt: attempt + 1 });
+          await this.sleep(Math.min(6_000, this.verificationDelayMs * (2 ** (attempt + 1))));
+        }
       }
-      state.completed = true;
-      return true;
+
+      // A successful response can be a no-op. Retry once only after repeated live
+      // evidence of the same owned target; never resend an ambiguous request.
+      if (allowResend && !context.isStopRequested?.() && state.deleteAcknowledged
+        && state.deleteAttempts < 2 && presentReads >= 2
+        && last.editable === (item.editable !== false)
+        && (item.editable === false || last.text === state.replacement)) {
+        await context.beforeMutation?.();
+        await this.ensureSession(context);
+        await this.ensureOwnership(item, state);
+        if (item.editable !== false && !await this.client.verifyText(item.fullname, state.replacement)) {
+          throw new Core.ApiError('The saved text changed. This item needs a new review.', { code: 'OVERWRITE_NOT_VERIFIED' });
+        }
+        this.report(context, 'retrying-delete');
+        await this.sendDelete(item, state);
+        return this.verifyDeleted(item, state, context, false);
+      }
+      throw new Core.ApiError('Deletion is not confirmed yet. Other items can continue; recheck this result when cleanup finishes.', { code: 'DELETE_RESULT_UNCERTAIN' });
+    }
+
+    async sendDelete(item, state) {
+      state.deleteSent = true;
+      state.deleteAcknowledged = false;
+      state.deleteAttempts += 1;
+      try {
+        await this.client.delete(item.fullname);
+        state.deleteAcknowledged = true;
+      } catch (error) {
+        if (!this.isAmbiguousMutationError(error)) {
+          state.deleteSent = false;
+          throw error;
+        }
+      }
     }
 
     isAmbiguousMutationError(error) {
@@ -1622,7 +1701,7 @@
       if (state.completed) return { status: 'skipped', reason: 'already-completed', deleted: true };
       if (state.deleteSent) {
         this.report(context, 'verifying-deletion');
-        await this.verifyDeleted(item, state);
+        await this.verifyDeleted(item, state, context);
         this.report(context, 'complete');
         return {
           status: 'completed',
@@ -1642,17 +1721,9 @@
         await this.ensureSession(context);
         await this.ensureOwnership(item, state);
         this.report(context, 'deleting-direct');
-        state.deleteSent = true;
-        try {
-          await this.client.delete(item.fullname);
-        } catch (error) {
-          if (!this.isAmbiguousMutationError(error)) {
-            state.deleteSent = false;
-            throw error;
-          }
-        }
+        await this.sendDelete(item, state);
         this.report(context, 'verifying-deletion');
-        await this.verifyDeleted(item, state);
+        await this.verifyDeleted(item, state, context);
         this.report(context, 'complete');
         return {
           status: 'completed',
@@ -1726,17 +1797,9 @@
         throw new Core.PauseRequiredError('The saved replacement changed before deletion. No delete was sent.', { code: 'OVERWRITE_NOT_VERIFIED' });
       }
       this.report(context, 'deleting');
-      state.deleteSent = true;
-      try {
-        await this.client.delete(item.fullname);
-      } catch (error) {
-        if (!this.isAmbiguousMutationError(error)) {
-          state.deleteSent = false;
-          throw error;
-        }
-      }
+      await this.sendDelete(item, state);
       this.report(context, 'verifying-deletion');
-      await this.verifyDeleted(item, state);
+      await this.verifyDeleted(item, state, context);
       this.report(context, 'complete');
       return {
         status: 'completed',
@@ -2036,6 +2099,61 @@
     .item a { color: var(--rt-accent); font-size: 12px; }
     .item-text { margin: 8px 0; }
     .item-text div { white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 0; }
+
+    .panel { max-height: calc(100dvh - 16px); max-width: calc(100vw - 16px); border-radius: 12px; container-type: inline-size; }
+    .header { flex: 0 0 auto; gap: 7px; padding: 11px 12px; cursor: grab; touch-action: none; user-select: none; }
+    .header .brand { flex: 1; }
+    .brand strong { font-size: 15px; }
+    .brand span { font-size: 11px; }
+    .brand small { margin-left: 5px; font-size: 10px; opacity: .75; }
+    .move-window { cursor: grab; font-size: 24px; width: 24px; }
+    .interacting .header, .interacting .move-window { cursor: grabbing; }
+    .launcher { touch-action: none; }
+    .launcher:hover { transform: none; }
+    .content { flex: 1 1 auto; padding: 16px; overscroll-behavior: contain; }
+    .account-line { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin-bottom: 18px; color: var(--rt-muted); font-size: 12px; }
+    .account-line a { color: var(--rt-accent); }
+    .section { gap: 11px; margin-bottom: 20px; }
+    .section-title h2 { font-size: 14px; letter-spacing: 0; }
+    .checks { gap: 20px; }
+    .advanced { border-top: 1px solid var(--rt-border); padding-top: 10px; }
+    .help { color: var(--rt-muted); font-size: 11px; line-height: 1.5; margin: 0; overflow-wrap: anywhere; }
+    .advanced .help { margin: 9px 0; }
+    .advanced .utility-actions { margin-top: 12px; }
+    .button { border-radius: 7px; min-height: 36px; padding: 7px 12px; font-size: 12px; }
+    .scan { width: 100%; }
+    .text-button { background: transparent; border-color: transparent; min-height: 26px; padding: 2px 4px; color: var(--rt-accent); }
+    .selection-summary { display: flex; gap: 5px 14px; flex-wrap: wrap; font-size: 12px; align-items: baseline; }
+    .selection-summary .found-total { color: var(--rt-muted); margin-left: auto; }
+    .preview { max-height: none; overflow: visible; border-radius: 8px; }
+    .preview-empty { padding: 18px 10px; }
+    .item { padding: 11px; gap: 5px; }
+    .item .actions { margin-top: 2px; }
+    .item-text { margin: 0; font-size: 11px; }
+    .item-status.unconfirmed { color: var(--rt-warning); }
+    .run-section { flex: 0 0 auto; display: grid; gap: 7px; padding: 12px 20px 20px; border-top: 1px solid var(--rt-border); background: var(--rt-bg); }
+    .run-section .current-action { min-height: 0; padding: 0; background: none; border: 0; font-size: 12px; font-weight: 600; }
+    .run-section .status-line { font-size: 11px; }
+    .batch-summary { display: flex; gap: 6px 16px; flex-wrap: wrap; font-size: 12px; }
+    .batch-summary span { white-space: nowrap; }
+    .delete-note { margin: 0; color: var(--rt-muted); font-size: 11px; }
+    .run-actions { flex-wrap: wrap; }
+    .run-actions .start { width: 100%; font-size: 13px; min-height: 40px; }
+    .run-actions .pause, .run-actions .stop { flex: 1; }
+    .run-details { margin: 12px 0; font-size: 12px; }
+    .detail-metrics { display: flex; gap: 10px; flex-wrap: wrap; color: var(--rt-muted); font-size: 11px; margin-bottom: 8px; }
+    .resize-handle { position: absolute; bottom: 0; border: 0; background: transparent; color: var(--rt-muted); width: 24px; height: 22px; padding: 0; touch-action: none; opacity: .65; font-size: 17px; z-index: 2; }
+    .resize-left { left: 0; cursor: nesw-resize; transform: rotate(90deg); }
+    .resize-right { right: 0; cursor: nwse-resize; }
+    button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--rt-accent); outline-offset: 2px; }
+    .resize-handle:focus-visible { outline-offset: -3px; opacity: 1; }
+    @container (max-width: 390px) {
+      .grid { grid-template-columns: 1fr; }
+      .compact-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .field.full { grid-column: auto; }
+      .content { padding: 12px; }
+      .selection-summary .found-total { margin-left: 0; }
+    }
   `;
 })();
 
@@ -2066,170 +2184,65 @@
   });
 
   const staticMarkup = String.raw`
-    <button class="launcher" type="button" title="Open Reddit Toolbox" aria-label="Open Reddit Toolbox" aria-expanded="false" aria-controls="rt-panel">
-      <span class="launcher-label">RT</span>
-      <span class="launcher-badge" hidden></span>
+    <button class="launcher" type="button" title="Open Reddit Toolbox · drag to move" aria-label="Open Reddit Toolbox" aria-expanded="false" aria-controls="rt-panel">
+      <span class="launcher-label">RT</span><span class="launcher-badge" hidden></span>
     </button>
     <aside class="panel" id="rt-panel" role="dialog" aria-label="Reddit Toolbox" aria-modal="false">
       <header class="header">
-        <div class="brand">
-          <strong>Reddit Toolbox</strong>
-          <span>Automated history cleanup · RC4</span>
-        </div>
+        <button class="icon-button move-window" type="button" aria-label="Move window" title="Drag to move. Arrow keys move; Shift moves farther.">⠿</button>
+        <div class="brand"><strong>Reddit Toolbox</strong><span>Your Reddit history <small>RC5</small></span></div>
+        <button class="icon-button reset-window" type="button" aria-label="Reset window layout" title="Reset size and position">↺</button>
         <button class="icon-button close" type="button" aria-label="Close">✕</button>
       </header>
-
       <div class="content">
-        <section class="section">
-          <div class="notice">
-            One confirmation starts the entire selected batch. No per-item clicks are required. Keep this tab open; the batch continues while this panel is closed.
-          </div>
-          <div class="status-line account-status" role="status">Uses the Reddit account signed in to this tab. No additional setup.</div>
-          <div class="actions">
-            <button class="button check-login" type="button">Check Reddit login</button>
-            <button class="button clear-history" type="button">Clear loaded history</button>
-            <a class="button canonical-link" href="https://www.reddit.com/" target="_blank" rel="noopener noreferrer">Open www.reddit.com</a>
-          </div>
-        </section>
-
+        <div class="account-line"><span class="account-status" role="status">Uses your signed-in Reddit account</span><a class="canonical-link" href="https://www.reddit.com/" target="_blank" rel="noopener noreferrer">Open www.reddit.com</a></div>
         <section class="section scope-section">
-          <div class="section-title"><h2>1. Scope</h2><span>Choose what can be touched</span></div>
-          <div class="checks">
-            <label class="check"><input id="include-comments" type="checkbox"> Comments</label>
-            <label class="check"><input id="include-posts" type="checkbox"> Posts</label>
-          </div>
-
+          <div class="section-title"><h2>What would you like to delete?</h2></div>
+          <div class="checks"><label class="check"><input id="include-comments" type="checkbox"> Comments</label><label class="check"><input id="include-posts" type="checkbox"> Posts</label></div>
           <div class="grid">
-            <div class="field full">
-              <label for="date-mode">Time frame</label>
-              <select id="date-mode">
-                <option value="all">All available history</option>
-                <option value="before">On or before a date</option>
-                <option value="after">On or after a date</option>
-                <option value="between">Between two dates</option>
-              </select>
-            </div>
-            <div class="field from-field">
-              <label for="from-date">From</label>
-              <input id="from-date" type="date">
-            </div>
-            <div class="field through-field">
-              <label for="through-date">Through</label>
-              <input id="through-date" type="date">
-            </div>
-            <div class="field">
-              <label for="max-items">Maximum items</label>
-              <input id="max-items" type="number" min="0" max="100000" step="1" inputmode="numeric" placeholder="0 = all">
-            </div>
-            <div class="field">
-              <label for="sort-order">Process order</label>
-              <select id="sort-order">
-                <option value="oldest">Oldest first</option>
-                <option value="newest">Newest first</option>
-              </select>
-            </div>
+            <div class="field full"><label for="date-mode">Date range</label><select id="date-mode"><option value="all">All time</option><option value="before">Before a date</option><option value="after">After a date</option><option value="between">Between dates</option></select></div>
+            <div class="field from-field"><label for="from-date">From</label><input id="from-date" type="date"></div>
+            <div class="field through-field"><label for="through-date">Through</label><input id="through-date" type="date"></div>
+            <div class="field"><label for="max-items">Limit</label><input id="max-items" type="number" min="0" max="100000" step="1" inputmode="numeric" placeholder="All matching items"></div>
+            <div class="field"><label for="sort-order">Order</label><select id="sort-order"><option value="oldest">Oldest first</option><option value="newest">Newest first</option></select></div>
           </div>
-
-          <details class="advanced">
-            <summary>Advanced</summary>
+          <details class="advanced"><summary>More options</summary>
             <div class="grid">
-            <div class="field full">
-              <label for="keep-subreddits">Keep these subreddits</label>
-              <input id="keep-subreddits" type="text" placeholder="askscience, personalfinance">
+              <div class="field full"><label for="keep-subreddits">Keep these subreddits</label><input id="keep-subreddits" type="text" placeholder="askscience, personalfinance"></div>
+              <div class="field"><label for="keep-score">Keep score at or above</label><input id="keep-score" type="number" step="1" placeholder="No score filter"></div>
+              <div class="field"><label for="text-includes">Only matching text</label><input id="text-includes" type="text" placeholder="Optional phrase"></div>
+              <div class="field full"><label>Seconds between items</label><div class="grid compact-grid"><input id="minimum-delay" type="number" min="1" max="300" step="0.5" aria-label="Minimum delay seconds"><input id="maximum-delay" type="number" min="1" max="300" step="0.5" aria-label="Maximum delay seconds"></div></div>
             </div>
-            <div class="field">
-              <label for="keep-score">Keep score at or above</label>
-              <input id="keep-score" type="number" step="1" placeholder="Disabled">
-            </div>
-            <div class="field">
-              <label for="text-includes">Only matching text</label>
-              <input id="text-includes" type="text" placeholder="Optional phrase">
-            </div>
-          </div>
-
-          <div class="checks">
-            <label class="check" title="Link and media posts have no body to overwrite.">
-              <input id="delete-uneditable" type="checkbox"> Delete link/media posts directly
-            </label>
-          </div>
-
-          <div class="grid">
-            <div class="field">
-              <label for="replacement-length">Replacement letters</label>
-              <input id="replacement-length" type="number" min="8" max="128" step="1">
-            </div>
-            <div class="field">
-              <label for="minimum-delay">Delay range (seconds)</label>
-              <div class="grid compact-grid">
-                <input id="minimum-delay" type="number" min="1" max="300" step="0.5" aria-label="Minimum delay seconds">
-                <input id="maximum-delay" type="number" min="1" max="300" step="0.5" aria-label="Maximum delay seconds">
-              </div>
-            </div>
-          </div>
-
-          <div class="automation-note">
-            Reddit Toolbox automatically waits through rate limits, retries temporary failures, and continues past isolated item failures. Five consecutive failures pause the batch for review.
-          </div>
-
-          </details>
-
-          <div class="actions">
-            <button class="button primary scan" type="button">Scan history</button>
-            <button class="button import" type="button">Import archive CSV</button>
+            <label class="check"><input id="delete-uneditable" type="checkbox"> Also delete link and media posts</label>
+            <p class="help">Link and media posts have no body to overwrite. Post titles stay unchanged. Reddit rate limits are handled automatically.</p>
+            <div class="actions utility-actions"><button class="button import" type="button">Import archive CSV</button><button class="button check-login" type="button">Check login</button><button class="button clear-history" type="button">Clear loaded history</button></div>
             <input class="file-input archive-input" type="file" accept=".csv,text/csv" multiple>
-            <button class="button build-preview" type="button">Prepare batch</button>
-          </div>
-          <div class="status-line scan-status" role="status">Profile listings can omit older history. Import comments.csv and posts.csv to include archive items.</div>
+            <p class="help">Profile history can omit older items. Import comments.csv or posts.csv from your Reddit archive to include them.</p>
+          </details>
+          <button class="button primary scan" type="button">Find matching items</button>
+          <div class="status-line scan-status" role="status">Review the matches before deleting.</div>
         </section>
-
-        <section class="section preview-section">
-          <div class="section-title"><h2>2. Review batch</h2></div>
-          <div class="preview-caption status-line">No batch prepared</div>
-          <div class="summary">
-            <div class="metric"><strong class="found-count">0</strong><span>Found</span></div>
-            <div class="metric"><strong class="selected-count">0</strong><span>Selected</span></div>
-            <div class="metric"><strong class="comment-count">0</strong><span>Comments</span></div>
-            <div class="metric"><strong class="post-count">0</strong><span>Posts</span></div>
-          </div>
-          <div class="preview"><div class="preview-empty">Scan or import data, then prepare a batch.</div></div>
-          <div class="actions preview-navigation" hidden>
-            <button class="button preview-previous" type="button">Previous 100</button>
-            <span class="preview-page status-line" role="status"></span>
-            <button class="button preview-next" type="button">Next 100</button>
-          </div>
-          <div class="actions">
-            <button class="button export-backup" type="button" disabled>Export selected content</button>
-            <button class="button export-log" type="button" disabled>Export run log</button>
-          </div>
+        <section class="section preview-section" hidden>
+          <div class="section-title"><h2>Review</h2><button class="button text-button export-backup" type="button" disabled>Save a copy</button></div>
+          <div class="selection-summary"><span><strong class="selected-count">0</strong> selected</span><span><strong class="comment-count">0</strong> comments · <strong class="post-count">0</strong> posts</span><span class="found-total">from <strong class="found-count">0</strong> found</span></div>
+          <div class="preview-caption help">No items loaded</div>
+          <div class="preview"><div class="preview-empty">Find matching items to review them.</div></div>
+          <div class="actions preview-navigation" hidden><button class="button preview-previous" type="button">Previous</button><span class="preview-page help" role="status"></span><button class="button preview-next" type="button">Next</button></div>
         </section>
-
-        <section class="section run-section">
-          <div class="section-title"><h2>3. Automate</h2><span>One confirmation for the whole batch</span></div>
-          <div class="confirm">
-            <span>Type <code class="confirmation-phrase">DELETE 0 ITEMS</code> once to unlock the complete batch.</span>
-            <input class="confirmation-input" type="text" autocomplete="off" spellcheck="false" aria-label="Deletion confirmation">
-          </div>
-          <div class="batch-summary" aria-live="polite">
-            <div class="metric"><strong class="processed-count">0</strong><span>Processed</span></div>
-            <div class="metric"><strong class="remaining-count">0</strong><span>Remaining</span></div>
-            <div class="metric"><strong class="failed-count">0</strong><span>Failed</span></div>
-            <div class="metric"><strong class="current-count">—</strong><span>Current</span></div>
-            <div class="metric"><strong class="deleted-count">0</strong><span>Deleted</span></div>
-            <div class="metric"><strong class="skipped-count">0</strong><span>Skipped</span></div>
-            <div class="metric"><strong class="elapsed-time">0s</strong><span>Elapsed</span></div>
-          </div>
-          <div class="current-action">Ready to run the selected batch automatically.</div>
-          <progress class="progress" value="0" max="1" aria-label="Batch progress"></progress>
-          <div class="status-line run-status" role="status">Idle</div>
-          <div class="actions run-actions">
-            <button class="button danger start" type="button" disabled>Run entire batch</button>
-            <button class="button pause" type="button" disabled>Pause batch</button>
-            <button class="button stop" type="button" disabled>Stop after current item</button>
-            <button class="button retry" type="button" disabled>Prepare retry batch</button>
-          </div>
-          <details><summary>Run details</summary><div class="log">No run activity.</div></details>
-        </section>
+        <details class="run-details" hidden><summary>Run details</summary>
+          <div class="detail-metrics"><span><strong class="processed-count">0</strong> processed</span><span><strong class="remaining-count">0</strong> remaining</span><span><strong class="skipped-count">0</strong> skipped</span><span class="current-count">—</span><span class="elapsed-time">0s</span></div>
+          <div class="log">No run activity.</div><button class="button export-log" type="button" disabled>Save run log</button>
+        </details>
       </div>
+      <footer class="run-section">
+        <div class="batch-summary" hidden aria-live="polite"><span><strong class="deleted-count">0</strong> deleted</span><span><strong class="unconfirmed-count">0</strong> need recheck</span><span><strong class="failed-count">0</strong> failed</span></div>
+        <div class="current-action" hidden></div><progress class="progress" value="0" max="1" aria-label="Cleanup progress" hidden></progress>
+        <div class="status-line run-status" role="status">Find items to get started.</div>
+        <p class="delete-note" hidden>Editable text is overwritten first. Deletion is permanent.</p>
+        <div class="actions run-actions"><button class="button danger start" type="button" disabled>Delete selected items</button><button class="button pause" type="button" hidden>Pause</button><button class="button stop" type="button" title="Finish the current item, then stop" hidden>Stop</button><button class="button recheck" type="button" hidden>Recheck results</button><button class="button retry" type="button" hidden>Review retries</button></div>
+      </footer>
+      <button class="resize-handle resize-left" data-edge="left" type="button" aria-label="Resize window from left" title="Drag to resize. Arrow keys also resize.">◢</button>
+      <button class="resize-handle resize-right" data-edge="right" type="button" aria-label="Resize window from right" title="Drag to resize. Arrow keys also resize.">◢</button>
     </aside>
   `;
 
@@ -2254,6 +2267,149 @@
   UI.dateLabel = dateLabel;
   UI.safeFilenamePart = safeFilenamePart;
   UI.compactError = compactError;
+})();
+
+/* src/ui/window.js */
+(() => {
+  'use strict';
+  const { UI } = globalThis.RedditToolbox;
+  const clamp = (value, minimum, maximum) => Math.min(Math.max(value, minimum), maximum);
+  const finite = (value, fallback) => Number.isFinite(value) ? value : fallback;
+
+  function fitWindow(rect = {}, viewportWidth = 1024, viewportHeight = 768) {
+    const maxWidth = Math.max(1, viewportWidth - 16);
+    const maxHeight = Math.max(1, viewportHeight - 16);
+    const width = clamp(finite(rect.width, 520), Math.min(320, maxWidth), maxWidth);
+    const height = clamp(finite(rect.height, Math.min(740, viewportHeight - 100)), Math.min(360, maxHeight), maxHeight);
+    return {
+      width, height,
+      left: clamp(finite(rect.left, viewportWidth - width - 20), 8, Math.max(8, viewportWidth - width - 8)),
+      top: clamp(finite(rect.top, viewportHeight - height - 80), 8, Math.max(8, viewportHeight - height - 8))
+    };
+  }
+
+  class ToolboxWindow {
+    constructor(app) {
+      this.app = app;
+      this.panel = app.refs.panel;
+      this.launcher = app.refs.launcher;
+      this.layout = app.store.get('window-layout', {}) || {};
+      this.launcherLayout = app.store.get('launcher-layout', {}) || {};
+      this.drag = null;
+      this.suppressLauncherClick = false;
+      const root = app.shadow;
+      const move = root.querySelector('.move-window');
+      root.querySelector('.header').addEventListener('pointerdown', event => {
+        if (!event.target.closest('button, a, input') || event.target.closest('.move-window')) this.begin(event, 'move');
+      });
+      for (const handle of root.querySelectorAll('.resize-handle')) {
+        handle.addEventListener('pointerdown', event => this.begin(event, handle.dataset.edge));
+        handle.addEventListener('keydown', event => this.keyboard(event, handle.dataset.edge));
+      }
+      move.addEventListener('keydown', event => this.keyboard(event, 'move'));
+      this.launcher.addEventListener('pointerdown', event => this.begin(event, 'launcher'));
+      this.launcher.addEventListener('click', event => {
+        if (!this.suppressLauncherClick) return;
+        this.suppressLauncherClick = false;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }, true);
+      globalThis.addEventListener('pointermove', event => this.move(event));
+      globalThis.addEventListener('pointerup', event => this.finish(event));
+      globalThis.addEventListener('pointercancel', event => this.finish(event));
+      globalThis.addEventListener('resize', () => this.apply());
+      globalThis.visualViewport?.addEventListener('resize', () => this.apply());
+      root.querySelector('.reset-window').addEventListener('click', () => this.reset());
+      this.apply();
+    }
+
+    viewport() {
+      return { width: globalThis.visualViewport?.width || innerWidth, height: globalThis.visualViewport?.height || innerHeight };
+    }
+
+    apply() {
+      const viewport = this.viewport();
+      const rect = fitWindow(this.layout, viewport.width, viewport.height);
+      Object.assign(this.panel.style, Object.fromEntries(Object.entries(rect).map(([key, value]) => [key, value + 'px'])));
+      this.panel.style.right = 'auto';
+      this.panel.style.bottom = 'auto';
+      const left = clamp(finite(this.launcherLayout.left, viewport.width - 68), 8, Math.max(8, viewport.width - 56));
+      const top = clamp(finite(this.launcherLayout.top, viewport.height - 68), 8, Math.max(8, viewport.height - 56));
+      Object.assign(this.launcher.style, { left: left + 'px', top: top + 'px', right: 'auto', bottom: 'auto' });
+    }
+
+    begin(event, mode) {
+      if (event.button !== 0 || this.drag) return;
+      if (mode !== 'launcher') event.preventDefault();
+      const element = mode === 'launcher' ? this.launcher : this.panel;
+      const rect = element.getBoundingClientRect();
+      this.drag = { mode, id: event.pointerId, x: event.clientX, y: event.clientY, rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height }, target: event.target, moved: false };
+      event.target.setPointerCapture?.(event.pointerId);
+      this.panel.classList.add('interacting');
+    }
+
+    move(event) {
+      const drag = this.drag;
+      if (!drag || drag.id !== event.pointerId) return;
+      const dx = event.clientX - drag.x;
+      const dy = event.clientY - drag.y;
+      if (Math.abs(dx) + Math.abs(dy) < 5 && !drag.moved) return;
+      drag.moved = true;
+      this.change(drag.rect, drag.mode, dx, dy);
+    }
+
+    change(rect, mode, dx, dy) {
+      if (mode === 'launcher') this.launcherLayout = { left: rect.left + dx, top: rect.top + dy };
+      else if (mode === 'move') this.layout = { ...rect, left: rect.left + dx, top: rect.top + dy };
+      else {
+        const viewport = this.viewport();
+        const right = rect.left + rect.width;
+        const left = mode === 'left' ? clamp(rect.left + dx, 8, right - Math.min(320, viewport.width - 16)) : rect.left;
+        this.layout = { ...rect, left, width: mode === 'left' ? right - left : clamp(rect.width + dx, Math.min(320, viewport.width - 16), viewport.width - rect.left - 8), height: clamp(rect.height + dy, Math.min(360, viewport.height - 16), viewport.height - rect.top - 8) };
+      }
+      this.apply();
+    }
+
+    finish(event) {
+      if (!this.drag || event.pointerId !== this.drag.id) return;
+      if (this.drag.moved) {
+        this.suppressLauncherClick = this.drag.mode === 'launcher' && event.type !== 'pointercancel';
+        this.save();
+      }
+      if (this.drag.target.hasPointerCapture?.(event.pointerId)) this.drag.target.releasePointerCapture(event.pointerId);
+      this.drag = null;
+      this.panel.classList.remove('interacting');
+    }
+
+    keyboard(event, mode) {
+      if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+      event.preventDefault();
+      const amount = event.shiftKey ? 50 : 10;
+      const rect = this.panel.getBoundingClientRect();
+      this.change({ left: rect.left, top: rect.top, width: rect.width, height: rect.height }, mode,
+        event.key === 'ArrowLeft' ? -amount : event.key === 'ArrowRight' ? amount : 0,
+        event.key === 'ArrowUp' ? -amount : event.key === 'ArrowDown' ? amount : 0);
+      this.save();
+    }
+
+    save() {
+      const viewport = this.viewport();
+      this.layout = fitWindow(this.layout, viewport.width, viewport.height);
+      this.app.store.set('window-layout', this.layout);
+      this.app.store.set('launcher-layout', this.launcherLayout);
+    }
+
+    reset() {
+      this.layout = {};
+      this.launcherLayout = {};
+      this.app.store.remove('window-layout');
+      this.app.store.remove('launcher-layout');
+      this.apply();
+    }
+  }
+
+  UI.fitWindow = fitWindow;
+  UI.ToolboxWindow = ToolboxWindow;
 })();
 
 /* src/ui/app.js */
@@ -2282,6 +2438,7 @@
       this.busy = false;
       this.previewPage = 0;
       this.completionResetTimer = null;
+      this.previewRebuildTimer = null;
       this.beforeUnloadHandler = (event) => {
         const state = this.runner?.state;
         if (!['running', 'waiting', 'paused', 'stopping'].includes(state)) return;
@@ -2308,6 +2465,7 @@
       this.writeSettingsToForm();
       this.store.remove?.('oauth-client-id');
       this.refs.canonicalLink.hidden = globalThis.location?.origin === 'https://www.reddit.com';
+      this.window = new UI.ToolboxWindow(this);
       this.bindEvents();
       this.updateDateFields();
       this.refreshControls();
@@ -2328,15 +2486,14 @@
         fromField: $('.from-field'), throughField: $('.through-field'), maxItems: $('#max-items'),
         sortOrder: $('#sort-order'), keepSubreddits: $('#keep-subreddits'), keepScore: $('#keep-score'),
         textIncludes: $('#text-includes'), deleteUneditable: $('#delete-uneditable'),
-        replacementLength: $('#replacement-length'),
         minimumDelay: $('#minimum-delay'), maximumDelay: $('#maximum-delay'),
         scan: $('.scan'), importButton: $('.import'), archiveInput: $('.archive-input'),
-        buildPreview: $('.build-preview'), scanStatus: $('.scan-status'),
+        scanStatus: $('.scan-status'), previewSection: $('.preview-section'), runSection: $('.run-section'),
         foundCount: $('.found-count'), selectedCount: $('.selected-count'),
         commentCount: $('.comment-count'), postCount: $('.post-count'),
         previewCaption: $('.preview-caption'), preview: $('.preview'),
         exportBackup: $('.export-backup'), exportLog: $('.export-log'),
-        confirmationPhrase: $('.confirmation-phrase'), confirmationInput: $('.confirmation-input'),
+        batchSummary: $('.batch-summary'), runDetails: $('.run-details'), deleteNote: $('.delete-note'), unconfirmedCount: $('.unconfirmed-count'), recheck: $('.recheck'),
         processedCount: $('.processed-count'), remainingCount: $('.remaining-count'),
         failedCount: $('.failed-count'), currentCount: $('.current-count'),
         deletedCount: $('.deleted-count'), skippedCount: $('.skipped-count'), elapsedTime: $('.elapsed-time'),
@@ -2359,22 +2516,25 @@
       this.refs.scan.addEventListener('click', () => this.scanProfile());
       this.refs.importButton.addEventListener('click', () => this.refs.archiveInput.click());
       this.refs.archiveInput.addEventListener('change', (event) => this.importArchive(event.target.files));
-      this.refs.buildPreview.addEventListener('click', () => this.buildPreview());
       this.refs.exportBackup.addEventListener('click', () => this.exportBackup());
       this.refs.exportLog.addEventListener('click', () => this.exportLog());
-      this.refs.confirmationInput.addEventListener('input', () => this.refreshControls());
+      this.refs.recheck.addEventListener('click', () => this.recheckResults());
       this.refs.start.addEventListener('click', () => this.startRun());
       this.refs.pause.addEventListener('click', () => this.togglePause());
       this.refs.stop.addEventListener('click', () => this.stopRun());
       this.refs.retry.addEventListener('click', () => this.prepareRetryBatch());
 
       for (const input of this.shadow.querySelectorAll('input, select')) {
-        if (input === this.refs.archiveInput || input === this.refs.confirmationInput) continue;
+        if (input === this.refs.archiveInput) continue;
         const changed = () => {
           if (this.busy) return;
-          this.settings = this.readSettingsFromForm();
+          const nextSettings = this.readSettingsFromForm();
+          if (JSON.stringify(nextSettings) === JSON.stringify(this.settings)) return;
+          this.settings = nextSettings;
           this.store.set('settings', this.settings);
-          if (this.plan) this.invalidatePlan('Settings changed. Prepare the batch again.');
+          this.invalidatePlan();
+          clearTimeout(this.previewRebuildTimer);
+          if (this.allItems().length) this.previewRebuildTimer = setTimeout(() => this.buildPreview({ refreshSession: false }), 180);
         };
         input.addEventListener('change', changed);
         input.addEventListener('input', changed);
@@ -2383,6 +2543,7 @@
 
     open() {
       this.refs.panel.classList.add('open');
+      this.window?.apply();
       this.refs.launcher.setAttribute('aria-expanded', 'true');
       this.refs.close.focus();
     }
@@ -2410,7 +2571,6 @@
       this.refs.keepScore.value = settings.keepScoreAtOrAbove;
       this.refs.textIncludes.value = settings.textIncludes;
       this.refs.deleteUneditable.checked = settings.deleteUneditablePosts;
-      this.refs.replacementLength.value = settings.replacementLength;
       this.refs.minimumDelay.value = settings.minimumDelaySeconds;
       this.refs.maximumDelay.value = settings.maximumDelaySeconds;
     }
@@ -2434,7 +2594,7 @@
         textIncludes: this.refs.textIncludes.value,
         deleteUneditablePosts: this.refs.deleteUneditable.checked,
         verifyOverwrite: true,
-        replacementLength: Math.max(8, Math.min(128, Number(this.refs.replacementLength.value) || 24)),
+        replacementLength: 24,
         minimumDelaySeconds,
         maximumDelaySeconds,
         continueOnFailure: true,
@@ -2449,7 +2609,8 @@
     }
 
     allItems() {
-      return Reddit.mergeItems(this.profileItems, this.archiveItems);
+      const completed = this.removalServices.get(this.username.toLowerCase())?.states;
+      return Reddit.mergeItems(this.profileItems, this.archiveItems).filter(item => !completed?.get(item.fullname)?.completed);
     }
 
     ensureClient() {
@@ -2462,10 +2623,12 @@
       this.busy = true;
       this.refreshControls();
       this.setStatus(this.refs.accountStatus, 'Checking this tab’s Reddit login…');
+      let checked = false;
       try {
         const session = await this.ensureClient().getSession();
         if (this.username && !Reddit.sameUsername(this.username, session.username)) this.clearLoadedData();
         this.showAccount(session.username);
+        checked = true;
       } catch (error) {
         this.invalidatePlan();
         this.setStatus(this.refs.accountStatus, UI.compactError(error), 'error');
@@ -2473,11 +2636,12 @@
         this.busy = false;
         this.refreshControls();
       }
+      if (checked && !this.plan?.startedAt && (this.profileItems.length || this.archiveItems.length)) await this.buildPreview({ refreshSession: false });
     }
 
     showAccount(username) {
       this.username = username;
-      this.setStatus(this.refs.accountStatus, username ? 'Signed in as u/' + username : 'Local review · sign in to Reddit and prepare again to enable cleanup.', username ? 'success' : '');
+      this.setStatus(this.refs.accountStatus, username ? 'Signed in as u/' + username : 'Local review · sign in to Reddit, then check login.', username ? 'success' : '');
     }
 
     clearLoadedData() {
@@ -2522,7 +2686,9 @@
 
       this.busy = true;
       this.refreshControls();
-      this.setStatus(this.refs.scanStatus, 'Connecting to the signed-in Reddit session…');
+      this.invalidatePlan();
+      let scanned = false;
+      this.setStatus(this.refs.scanStatus, 'Finding your history…');
       try {
         const scanner = new Reddit.RedditScanner(this.ensureClient(), {
           onProgress: ({ kind, pages, count, after }) => {
@@ -2536,6 +2702,7 @@
         });
         if (this.username && !Reddit.sameUsername(this.username, result.username)) this.clearLoadedData();
         this.profileItems = result.items;
+        scanned = true;
         this.showAccount(result.username);
         this.coverage = result.report;
         this.invalidatePlan();
@@ -2549,11 +2716,16 @@
         this.busy = false;
         this.refreshControls();
       }
+      if (scanned) {
+        await this.buildPreview({ refreshSession: false });
+        if (this.plan) this.refs.previewSection.scrollIntoView({ block: 'start' });
+      }
     }
 
     async importArchive(fileList) {
       if (this.busy) return;
       const files = Array.from(fileList || []);
+      let importedSuccessfully = false;
       if (!files.length) return;
       this.busy = true;
       this.refreshControls();
@@ -2568,6 +2740,7 @@
           messages.push(`${file.name}: ${result.items.length} accepted, ${result.rejected} rejected, ${result.duplicates} duplicates`);
         }
         this.archiveItems = Reddit.mergeItems(this.archiveItems, imported);
+        importedSuccessfully = true;
         this.invalidatePlan();
         this.setStatus(
           this.refs.scanStatus,
@@ -2582,9 +2755,13 @@
         this.refs.archiveInput.value = '';
         this.refreshControls();
       }
+      if (importedSuccessfully) {
+        await this.buildPreview();
+        if (this.plan) this.refs.previewSection.scrollIntoView({ block: 'start' });
+      }
     }
 
-    async buildPreview() {
+    async buildPreview(options = {}) {
       if (this.busy) return;
       this.busy = true;
       this.refreshControls();
@@ -2592,10 +2769,10 @@
         this.settings = this.readSettingsFromForm();
         this.store.set('settings', this.settings);
         const allItems = this.allItems();
-        if (!allItems.length) throw new Error('Scan your profile or import Reddit archive CSV files first.');
+        if (!allItems.length && !this.coverage && !this.archiveItems.length) throw new Error('Find matching items or import an archive first.');
         const client = this.ensureClient();
         let session;
-        try { session = await client.getSession(); }
+        try { session = options.refreshSession === false ? { username: this.username } : await client.getSession(); }
         catch (error) {
           if (!(error instanceof Core.AuthError) || this.profileItems.length) throw error;
           session = { username: '' };
@@ -2612,11 +2789,10 @@
         });
         this.plan = Core.createPlan(selection.selected, { ...this.settings, accountId: this.username.toLowerCase() });
         this.plan.selectionSkipped = selection.skipped;
-        this.refs.confirmationInput.value = '';
         this.renderPlan();
         this.setStatus(
           this.refs.scanStatus,
-          `${selection.selected.length} selected${this.username ? ' for one automated batch' : ' for local review; sign in to Reddit and prepare again to enable cleanup'}; ${Object.values(selection.skipped).reduce((sum, count) => sum + count, 0)} excluded by filters.`,
+          `${selection.selected.length} selected${this.username ? '' : ' for local review; sign in to Reddit, then check login'} · ${Object.values(selection.skipped).reduce((sum, count) => sum + count, 0)} excluded by filters.`,
           'success'
         );
       } catch (error) {
@@ -2631,14 +2807,13 @@
     invalidatePlan(message = '') {
       this.plan = null;
       this.refs.previewNavigation.hidden = true;
-      this.refs.confirmationInput.value = '';
-      this.refs.confirmationPhrase.textContent = 'DELETE 0 ITEMS';
       this.refs.selectedCount.textContent = '0';
       this.refs.commentCount.textContent = '0';
       this.refs.postCount.textContent = '0';
       this.refs.processedCount.textContent = '0';
       this.refs.remainingCount.textContent = '0';
       this.refs.failedCount.textContent = '0';
+      this.refs.unconfirmedCount.textContent = '0';
       this.refs.deletedCount.textContent = '0';
       this.refs.skippedCount.textContent = '0';
       this.refs.elapsedTime.textContent = '0s';
@@ -2679,19 +2854,19 @@
       const preserved = [filters.keepSubreddits.length ? `keep ${filters.keepSubreddits.map((name) => `r/${name}`).join(', ')}` : '',
         filters.keepScoreAtOrAbove !== null ? `keep score ≥ ${filters.keepScoreAtOrAbove}` : '',
         filters.textIncludes ? 'text filter active' : ''].filter(Boolean).join('; ');
-      this.refs.previewCaption.textContent = `${this.plan.options.accountId ? `u/${this.plan.options.accountId}` : 'Local review · not signed in'} · ${source}${incomplete ? ' (listing limited)' : ''}. ${editable} overwrite then delete; ${uneditable} ${this.plan.options.deleteUneditablePosts ? 'direct delete' : 'will skip'}. ${span}; ${filters.sortOrder} first. ${preserved ? `${preserved}. ` : ''}Lifetime completeness is not established.`;
-      this.refs.confirmationPhrase.textContent = this.plan.options.accountId ? this.plan.confirmation : 'Sign in to Reddit, then prepare again';
+      this.refs.previewCaption.textContent = `${source}${incomplete ? ' · listing limited' : ''} · ${span}. ${editable} overwrite then delete${uneditable ? `; ${uneditable} ${this.plan.options.deleteUneditablePosts ? 'direct delete' : 'will skip'}` : ''}.${preserved ? ` Keeping: ${preserved}.` : ''}`;
       this.refs.preview.replaceChildren();
       this.refs.processedCount.textContent = '0';
       this.refs.remainingCount.textContent = String(contents.length);
       this.refs.failedCount.textContent = '0';
+      this.refs.unconfirmedCount.textContent = '0';
       this.refs.deletedCount.textContent = '0';
       this.refs.skippedCount.textContent = '0';
       this.refs.elapsedTime.textContent = '0s';
       this.refs.currentCount.textContent = '—';
       this.refs.currentAction.textContent = 'Ready to run the selected batch automatically.';
       this.setStatus(this.refs.runStatus, contents.length
-        ? `Ready · one confirmation will process all ${contents.length} selected items.`
+        ? (this.plan.options.accountId ? 'Delete applies to the reviewed selection.' : 'Sign in to Reddit, then check login in More options.')
         : 'No matching items.');
 
       this.previewPage = 0;
@@ -2707,10 +2882,9 @@
       if (!this.plan || this.busy || this.plan.startedAt) return;
       const page = this.previewPage;
       this.plan = Core.createPlan(this.plan.items.filter((item) => item.id !== id).map((item) => item.content), this.plan.options);
-      this.refs.confirmationInput.value = '';
       this.renderPlan();
       this.renderPreviewPage(page);
-      this.setStatus(this.refs.runStatus, 'Item kept. Review the remaining batch and enter its updated confirmation.');
+      this.setStatus(this.refs.runStatus, 'Item kept. The Delete button now applies to the remaining selection.');
     }
 
     renderPreviewPage(page = 0) {
@@ -2748,7 +2922,7 @@
           const fullText = document.createElement('details');
           fullText.className = 'item-text';
           const textSummary = document.createElement('summary');
-          textSummary.textContent = 'Read full text';
+          textSummary.textContent = 'Full text';
           const textBody = document.createElement('div');
           textBody.textContent = [item.title, item.text].filter(Boolean).join('\n\n') || 'No editable text in this record.';
           fullText.append(textSummary, textBody);
@@ -2775,7 +2949,7 @@
           const keep = document.createElement('button');
           keep.className = 'button keep-item';
           keep.type = 'button';
-          keep.textContent = 'Keep this item';
+          keep.textContent = 'Keep';
           keep.disabled = Boolean(this.busy || this.plan.startedAt);
           keep.addEventListener('click', () => this.excludeFromPlan(queueItem.id));
           actions.append(keep);
@@ -2823,7 +2997,9 @@
     'verifying-overwrite': 'Verifying the saved replacement',
     deleting: 'Deleting the item',
     'deleting-direct': 'Deleting a non-editable post',
-    'verifying-deletion': 'Confirming deletion',
+    'verifying-deletion': 'Waiting for Reddit to confirm deletion',
+    'retrying-delete': 'Retrying a deletion that Reddit has not applied',
+    unconfirmed: 'Needs recheck',
     complete: 'Item complete',
     completed: 'Item complete',
     skipped: 'Item skipped',
@@ -2848,14 +3024,27 @@
         !locked && this.plan?.options.accountId
         && summary.ready > 0
         && Core.isPlanCurrent(this.plan)
-        && this.refs.confirmationInput.value.trim() === this.plan.confirmation
       );
       this.refs.start.disabled = locked || !confirmed;
-      this.refs.confirmationInput.disabled = locked || !this.plan?.options.accountId;
+      this.refs.start.hidden = !this.plan || Boolean(this.plan.startedAt);
+      this.refs.start.textContent = this.plan?.options.accountId ? `Delete ${summary.ready} ${summary.ready === 1 ? 'item' : 'items'}` : 'Sign in to delete';
+      this.refs.pause.hidden = !active;
+      this.refs.stop.hidden = !active;
+      this.refs.retry.hidden = active || !(summary.failed || summary.stopped);
+      this.refs.recheck.hidden = active || !summary.unconfirmed;
+      this.refs.recheck.disabled = locked;
+      this.refs.runSection.hidden = !this.plan;
+      this.refs.previewSection.hidden = !this.plan;
+      this.refs.batchSummary.hidden = !this.plan?.startedAt;
+      this.refs.runDetails.hidden = !this.plan?.startedAt;
+      this.refs.currentAction.hidden = !this.plan?.startedAt;
+      this.refs.progress.hidden = !this.plan?.startedAt;
+      this.refs.deleteNote.hidden = !this.plan?.options.accountId || Boolean(this.plan.startedAt);
+      this.refs.scan.textContent = this.busy && !active ? 'Working…' : this.profileItems.length ? 'Refresh history' : 'Find matching items';
       this.refs.pause.disabled = !active || this.runner?.state === 'stopping';
       this.refs.stop.disabled = !active || this.runner?.state === 'stopping';
       this.refs.retry.disabled = locked || !(summary.failed || summary.stopped);
-      this.refs.pause.textContent = this.runner?.state === 'paused' ? 'Resume batch' : 'Pause batch';
+      this.refs.pause.textContent = this.runner?.state === 'paused' ? 'Resume' : 'Pause';
       this.refs.checkLogin.disabled = locked;
       this.refs.clearHistory.disabled = locked;
       this.refs.exportLog.disabled = !this.plan || !this.plan.items.some((item) => item.status !== 'ready');
@@ -2902,9 +3091,9 @@
         return;
       }
       if (state === 'completed' || state === 'completed-with-failures') {
-        this.refs.launcher.classList.add(current.failed ? 'failed' : 'completed');
-        this.refs.launcherLabel.textContent = current.failed ? '!' : '✓';
-        this.refs.launcher.title = current.failed ? 'Batch completed with failures' : 'Batch completed';
+        this.refs.launcher.classList.add((current.failed || current.unconfirmed) ? 'failed' : 'completed');
+        this.refs.launcherLabel.textContent = (current.failed || current.unconfirmed) ? '!' : '✓';
+        this.refs.launcher.title = current.unconfirmed ? 'Cleanup finished with results to recheck' : current.failed ? 'Batch completed with failures' : 'Batch completed';
         return;
       }
 
@@ -2929,7 +3118,8 @@
       const detail = queueItem.error?.message
         || queueItem.outcome?.reason
         || batchPhaseLabel(queueItem.phase);
-      status.textContent = `${queueItem.status} · ${detail}`;
+      status.textContent = queueItem.status === 'completed' ? 'Deleted' : queueItem.status === 'unconfirmed' ? 'Needs recheck · not counted as deleted' : `${queueItem.status} · ${detail}`;
+      if (queueItem.status === 'completed') row.querySelector('.snippet').textContent = 'Deleted from Reddit';
     }
 
     updateBatchMetrics(event) {
@@ -2939,6 +3129,7 @@
       this.refs.processedCount.textContent = String(summary.processed);
       this.refs.remainingCount.textContent = String(summary.remaining);
       this.refs.failedCount.textContent = String(summary.failed);
+      this.refs.unconfirmedCount.textContent = String(summary.unconfirmed);
       this.refs.deletedCount.textContent = String(summary.completed);
       this.refs.skippedCount.textContent = String(summary.skipped);
       const started = this.plan?.startedAt ? new Date(this.plan.startedAt).getTime() : Date.now();
@@ -2965,6 +3156,9 @@
           break;
         case 'item-finished':
           this.log(`Item ${event.index + 1}/${event.total}: ${event.queueItem.outcome.reason}.`);
+          break;
+        case 'item-unconfirmed':
+          this.log(`Item ${event.index + 1}/${event.total}: deletion needs a later recheck. Continuing with the next item.`);
           break;
         case 'item-failed':
           this.log(`Item ${event.index + 1}/${event.total}: failed — ${UI.compactError(event.error)}.`);
@@ -3018,8 +3212,8 @@
           break;
         case 'batch-completed':
           this.log('Automated batch completed.');
-          this.refs.currentAction.textContent = summary.failed
-            ? 'Batch complete with failed items available for retry.'
+          this.refs.currentAction.textContent = (summary.failed || summary.unconfirmed)
+            ? 'Cleanup finished. Review the remaining results below.'
             : 'Batch complete.';
           break;
         default:
@@ -3030,8 +3224,8 @@
         ? `Paused · ${summary.processed}/${summary.total} processed · ${summary.remaining} remaining`
         : event.state === 'stopping'
           ? `Stopping · ${summary.processed}/${summary.total} processed · ${summary.remaining} remaining`
-          : `${summary.processed}/${summary.total} processed · ${summary.completed} deleted · ${summary.skipped} skipped · ${summary.failed} failed`;
-      this.setStatus(this.refs.runStatus, status, summary.failed ? 'error' : '');
+          : `${summary.processed}/${summary.total} processed · ${summary.completed} deleted · ${summary.skipped} skipped · ${summary.failed} failed · ${summary.unconfirmed} need recheck`;
+      this.setStatus(this.refs.runStatus, status, summary.failed || summary.unconfirmed ? 'error' : '');
       this.setLauncherState(event.state, summary);
       this.refreshControls();
     }
@@ -3047,7 +3241,6 @@
         this.setStatus(this.refs.runStatus, 'This batch has no queued items.', 'error');
         return;
       }
-      if (this.refs.confirmationInput.value.trim() !== this.plan.confirmation) return;
 
       this.settings = this.readSettingsFromForm();
       const expectedOptions = { ...this.settings, accountId: this.plan.options.accountId };
@@ -3059,7 +3252,6 @@
       this.refreshControls();
       this.logLines = [];
       this.refs.log.textContent = '';
-      this.refs.confirmationInput.value = '';
       this.setStatus(this.refs.runStatus, 'Verifying the Reddit session before starting…');
       try {
         const client = this.ensureClient();
@@ -3090,15 +3282,18 @@
         this.refreshControls();
         await this.runner.run(this.plan);
         const summary = Core.planSummary(this.plan);
+        this.renderCounts();
         const message = summary.stopped
           ? `${summary.completed} deleted; ${summary.stopped} remaining items stopped.`
+          : summary.unconfirmed
+            ? `${summary.completed} deleted; ${summary.unconfirmed} need recheck; ${summary.failed} failed. Cleanup finished.`
           : summary.failed
             ? `${summary.completed} deleted; ${summary.failed} failed items can be retried as one batch.`
             : `${summary.completed} deleted, ${summary.skipped} skipped. Automated batch complete.`;
         this.setStatus(
           this.refs.runStatus,
           message,
-          summary.failed || summary.stopped ? 'error' : 'success'
+          summary.failed || summary.stopped || summary.unconfirmed ? 'error' : 'success'
         );
       } catch (error) {
         this.setStatus(this.refs.runStatus, UI.compactError(error), 'error');
@@ -3140,13 +3335,42 @@
         return;
       }
       this.plan = retry;
-      this.refs.confirmationInput.value = '';
       this.renderPlan();
       this.setStatus(
         this.refs.runStatus,
-        `Retry batch prepared with ${retry.items.length} items. Review once, confirm once, then run the full batch.`
+        `Retry batch prepared with ${retry.items.length} items. Review the remaining items, then use Delete.`
       );
       this.open();
+    }
+
+    async recheckResults() {
+      if (this.busy || !this.plan || !this.removalService) return;
+      this.busy = true;
+      this.refreshControls();
+      try {
+        const service = this.removalService;
+        for (const row of this.plan.items.filter(item => item.status === 'unconfirmed')) {
+          try {
+            await service.verifyDeleted(row.content, service.stateFor(row.content.fullname), {}, false);
+            row.status = 'completed';
+            row.phase = 'completed';
+            row.error = null;
+            row.outcome = { status: 'completed', reason: 'deletion-confirmed', deleted: true };
+          } catch (error) { row.error = { code: error.code, message: UI.compactError(error) }; }
+          this.updateQueueRow(row);
+        }
+        const summary = Core.planSummary(this.plan);
+        if (this.runner) this.runner.summary = { ...summary };
+        this.plan.status = summary.failed || summary.unconfirmed ? 'completed-with-failures' : 'completed';
+        if (this.runner) this.runner.state = this.plan.status;
+        this.updateBatchMetrics({ summary });
+        this.renderCounts();
+        this.setStatus(this.refs.runStatus, summary.completed + ' deleted; ' + summary.unconfirmed + ' still need recheck. No deletion requests were resent.', summary.unconfirmed ? 'error' : 'success');
+        this.setLauncherState(this.plan.status, summary);
+      } finally {
+        this.busy = false;
+        this.refreshControls();
+      }
     }
 
     exportBackup() {

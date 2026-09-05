@@ -13,6 +13,7 @@ export const sourceOrder = [
   'src/reddit/removal-service.js',
   'src/ui/styles.js',
   'src/ui/template.js',
+  'src/ui/window.js',
   'src/ui/app.js',
   'src/ui/scope.js',
   'src/ui/run.js',

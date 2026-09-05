@@ -14,7 +14,9 @@
     'verifying-overwrite': 'Verifying the saved replacement',
     deleting: 'Deleting the item',
     'deleting-direct': 'Deleting a non-editable post',
-    'verifying-deletion': 'Confirming deletion',
+    'verifying-deletion': 'Waiting for Reddit to confirm deletion',
+    'retrying-delete': 'Retrying a deletion that Reddit has not applied',
+    unconfirmed: 'Needs recheck',
     complete: 'Item complete',
     completed: 'Item complete',
     skipped: 'Item skipped',
@@ -39,14 +41,27 @@
         !locked && this.plan?.options.accountId
         && summary.ready > 0
         && Core.isPlanCurrent(this.plan)
-        && this.refs.confirmationInput.value.trim() === this.plan.confirmation
       );
       this.refs.start.disabled = locked || !confirmed;
-      this.refs.confirmationInput.disabled = locked || !this.plan?.options.accountId;
+      this.refs.start.hidden = !this.plan || Boolean(this.plan.startedAt);
+      this.refs.start.textContent = this.plan?.options.accountId ? `Delete ${summary.ready} ${summary.ready === 1 ? 'item' : 'items'}` : 'Sign in to delete';
+      this.refs.pause.hidden = !active;
+      this.refs.stop.hidden = !active;
+      this.refs.retry.hidden = active || !(summary.failed || summary.stopped);
+      this.refs.recheck.hidden = active || !summary.unconfirmed;
+      this.refs.recheck.disabled = locked;
+      this.refs.runSection.hidden = !this.plan;
+      this.refs.previewSection.hidden = !this.plan;
+      this.refs.batchSummary.hidden = !this.plan?.startedAt;
+      this.refs.runDetails.hidden = !this.plan?.startedAt;
+      this.refs.currentAction.hidden = !this.plan?.startedAt;
+      this.refs.progress.hidden = !this.plan?.startedAt;
+      this.refs.deleteNote.hidden = !this.plan?.options.accountId || Boolean(this.plan.startedAt);
+      this.refs.scan.textContent = this.busy && !active ? 'Working…' : this.profileItems.length ? 'Refresh history' : 'Find matching items';
       this.refs.pause.disabled = !active || this.runner?.state === 'stopping';
       this.refs.stop.disabled = !active || this.runner?.state === 'stopping';
       this.refs.retry.disabled = locked || !(summary.failed || summary.stopped);
-      this.refs.pause.textContent = this.runner?.state === 'paused' ? 'Resume batch' : 'Pause batch';
+      this.refs.pause.textContent = this.runner?.state === 'paused' ? 'Resume' : 'Pause';
       this.refs.checkLogin.disabled = locked;
       this.refs.clearHistory.disabled = locked;
       this.refs.exportLog.disabled = !this.plan || !this.plan.items.some((item) => item.status !== 'ready');
@@ -93,9 +108,9 @@
         return;
       }
       if (state === 'completed' || state === 'completed-with-failures') {
-        this.refs.launcher.classList.add(current.failed ? 'failed' : 'completed');
-        this.refs.launcherLabel.textContent = current.failed ? '!' : '✓';
-        this.refs.launcher.title = current.failed ? 'Batch completed with failures' : 'Batch completed';
+        this.refs.launcher.classList.add((current.failed || current.unconfirmed) ? 'failed' : 'completed');
+        this.refs.launcherLabel.textContent = (current.failed || current.unconfirmed) ? '!' : '✓';
+        this.refs.launcher.title = current.unconfirmed ? 'Cleanup finished with results to recheck' : current.failed ? 'Batch completed with failures' : 'Batch completed';
         return;
       }
 
@@ -120,7 +135,8 @@
       const detail = queueItem.error?.message
         || queueItem.outcome?.reason
         || batchPhaseLabel(queueItem.phase);
-      status.textContent = `${queueItem.status} · ${detail}`;
+      status.textContent = queueItem.status === 'completed' ? 'Deleted' : queueItem.status === 'unconfirmed' ? 'Needs recheck · not counted as deleted' : `${queueItem.status} · ${detail}`;
+      if (queueItem.status === 'completed') row.querySelector('.snippet').textContent = 'Deleted from Reddit';
     }
 
     updateBatchMetrics(event) {
@@ -130,6 +146,7 @@
       this.refs.processedCount.textContent = String(summary.processed);
       this.refs.remainingCount.textContent = String(summary.remaining);
       this.refs.failedCount.textContent = String(summary.failed);
+      this.refs.unconfirmedCount.textContent = String(summary.unconfirmed);
       this.refs.deletedCount.textContent = String(summary.completed);
       this.refs.skippedCount.textContent = String(summary.skipped);
       const started = this.plan?.startedAt ? new Date(this.plan.startedAt).getTime() : Date.now();
@@ -156,6 +173,9 @@
           break;
         case 'item-finished':
           this.log(`Item ${event.index + 1}/${event.total}: ${event.queueItem.outcome.reason}.`);
+          break;
+        case 'item-unconfirmed':
+          this.log(`Item ${event.index + 1}/${event.total}: deletion needs a later recheck. Continuing with the next item.`);
           break;
         case 'item-failed':
           this.log(`Item ${event.index + 1}/${event.total}: failed — ${UI.compactError(event.error)}.`);
@@ -209,8 +229,8 @@
           break;
         case 'batch-completed':
           this.log('Automated batch completed.');
-          this.refs.currentAction.textContent = summary.failed
-            ? 'Batch complete with failed items available for retry.'
+          this.refs.currentAction.textContent = (summary.failed || summary.unconfirmed)
+            ? 'Cleanup finished. Review the remaining results below.'
             : 'Batch complete.';
           break;
         default:
@@ -221,8 +241,8 @@
         ? `Paused · ${summary.processed}/${summary.total} processed · ${summary.remaining} remaining`
         : event.state === 'stopping'
           ? `Stopping · ${summary.processed}/${summary.total} processed · ${summary.remaining} remaining`
-          : `${summary.processed}/${summary.total} processed · ${summary.completed} deleted · ${summary.skipped} skipped · ${summary.failed} failed`;
-      this.setStatus(this.refs.runStatus, status, summary.failed ? 'error' : '');
+          : `${summary.processed}/${summary.total} processed · ${summary.completed} deleted · ${summary.skipped} skipped · ${summary.failed} failed · ${summary.unconfirmed} need recheck`;
+      this.setStatus(this.refs.runStatus, status, summary.failed || summary.unconfirmed ? 'error' : '');
       this.setLauncherState(event.state, summary);
       this.refreshControls();
     }
@@ -238,7 +258,6 @@
         this.setStatus(this.refs.runStatus, 'This batch has no queued items.', 'error');
         return;
       }
-      if (this.refs.confirmationInput.value.trim() !== this.plan.confirmation) return;
 
       this.settings = this.readSettingsFromForm();
       const expectedOptions = { ...this.settings, accountId: this.plan.options.accountId };
@@ -250,7 +269,6 @@
       this.refreshControls();
       this.logLines = [];
       this.refs.log.textContent = '';
-      this.refs.confirmationInput.value = '';
       this.setStatus(this.refs.runStatus, 'Verifying the Reddit session before starting…');
       try {
         const client = this.ensureClient();
@@ -281,15 +299,18 @@
         this.refreshControls();
         await this.runner.run(this.plan);
         const summary = Core.planSummary(this.plan);
+        this.renderCounts();
         const message = summary.stopped
           ? `${summary.completed} deleted; ${summary.stopped} remaining items stopped.`
+          : summary.unconfirmed
+            ? `${summary.completed} deleted; ${summary.unconfirmed} need recheck; ${summary.failed} failed. Cleanup finished.`
           : summary.failed
             ? `${summary.completed} deleted; ${summary.failed} failed items can be retried as one batch.`
             : `${summary.completed} deleted, ${summary.skipped} skipped. Automated batch complete.`;
         this.setStatus(
           this.refs.runStatus,
           message,
-          summary.failed || summary.stopped ? 'error' : 'success'
+          summary.failed || summary.stopped || summary.unconfirmed ? 'error' : 'success'
         );
       } catch (error) {
         this.setStatus(this.refs.runStatus, UI.compactError(error), 'error');
@@ -331,13 +352,42 @@
         return;
       }
       this.plan = retry;
-      this.refs.confirmationInput.value = '';
       this.renderPlan();
       this.setStatus(
         this.refs.runStatus,
-        `Retry batch prepared with ${retry.items.length} items. Review once, confirm once, then run the full batch.`
+        `Retry batch prepared with ${retry.items.length} items. Review the remaining items, then use Delete.`
       );
       this.open();
+    }
+
+    async recheckResults() {
+      if (this.busy || !this.plan || !this.removalService) return;
+      this.busy = true;
+      this.refreshControls();
+      try {
+        const service = this.removalService;
+        for (const row of this.plan.items.filter(item => item.status === 'unconfirmed')) {
+          try {
+            await service.verifyDeleted(row.content, service.stateFor(row.content.fullname), {}, false);
+            row.status = 'completed';
+            row.phase = 'completed';
+            row.error = null;
+            row.outcome = { status: 'completed', reason: 'deletion-confirmed', deleted: true };
+          } catch (error) { row.error = { code: error.code, message: UI.compactError(error) }; }
+          this.updateQueueRow(row);
+        }
+        const summary = Core.planSummary(this.plan);
+        if (this.runner) this.runner.summary = { ...summary };
+        this.plan.status = summary.failed || summary.unconfirmed ? 'completed-with-failures' : 'completed';
+        if (this.runner) this.runner.state = this.plan.status;
+        this.updateBatchMetrics({ summary });
+        this.renderCounts();
+        this.setStatus(this.refs.runStatus, summary.completed + ' deleted; ' + summary.unconfirmed + ' still need recheck. No deletion requests were resent.', summary.unconfirmed ? 'error' : 'success');
+        this.setLauncherState(this.plan.status, summary);
+      } finally {
+        this.busy = false;
+        this.refreshControls();
+      }
     }
 
     exportBackup() {

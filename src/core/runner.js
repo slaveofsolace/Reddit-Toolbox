@@ -60,7 +60,7 @@
         this.summary[item.status] -= 1;
         this.summary[status] += 1;
         const summary = this.summary;
-        summary.processed = summary.completed + summary.skipped + summary.failed;
+        summary.processed = summary.completed + summary.skipped + summary.failed + summary.unconfirmed;
         summary.remaining = summary.ready + summary.processing + summary.stopped;
         summary.percent = summary.total ? Math.round(summary.processed / summary.total * 100) : 0;
       }
@@ -170,6 +170,14 @@
           this.emit('item-finished', { queueItem, index, total });
           return;
         } catch (error) {
+          if (error?.code === 'DELETE_RESULT_UNCERTAIN') {
+            queueItem.error = { code: error.code, message: error.message };
+            this.setItemStatus(queueItem, 'unconfirmed');
+            queueItem.phase = 'unconfirmed';
+            queueItem.finishedAt = new Date().toISOString();
+            this.emit('item-unconfirmed', { queueItem, error, index, total });
+            return;
+          }
           if (error?.pauseRequired) {
             this.pause(error.message || 'Reddit needs attention before the batch can continue.');
             this.emit('attention-required', { queueItem, error, index, total });
@@ -311,7 +319,7 @@
         this.state = 'stopped';
         this.emit('batch-stopped', { plan });
       } else {
-        plan.status = this.summary.failed ? 'completed-with-failures' : 'completed';
+        plan.status = this.summary.failed || this.summary.unconfirmed ? 'completed-with-failures' : 'completed';
         this.state = plan.status;
         this.emit('batch-completed', { plan });
       }

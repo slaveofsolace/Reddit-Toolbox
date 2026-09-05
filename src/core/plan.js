@@ -113,6 +113,7 @@
       completed: 0,
       skipped: 0,
       failed: 0,
+      unconfirmed: 0,
       stopped: 0,
       processed: 0,
       remaining: 0,
@@ -121,7 +122,7 @@
     for (const item of plan?.items || []) {
       summary[item.status] = (summary[item.status] || 0) + 1;
     }
-    summary.processed = summary.completed + summary.skipped + summary.failed;
+    summary.processed = summary.completed + summary.skipped + summary.failed + summary.unconfirmed;
     summary.remaining = summary.ready + summary.processing + summary.stopped;
     summary.percent = summary.total
       ? Math.min(100, Math.round((summary.processed / summary.total) * 100))

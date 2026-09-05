@@ -1,13 +1,14 @@
 {
   "name": "reddit-toolbox",
-  "version": "1.0.0-rc.4",
+  "version": "1.0.0-rc.5",
   "private": true,
   "description": "Local-first automated Reddit history cleanup userscript.",
   "type": "module",
   "scripts": {
     "build": "node scripts/build-userscript.mjs",
     "check": "npm run build && npm test && node scripts/check-userscript.mjs",
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "test:browser": "node scripts/check-browser.cjs"
   },
   "engines": {
     "node": ">=20"

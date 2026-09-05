@@ -86,6 +86,14 @@
         });
       }
 
+      if (payload?.success === false || payload?.error) {
+        const status = Number(payload.error);
+        if (status === 401) throw new Core.AuthError();
+        if (status === 403) throw new Core.PauseRequiredError('Reddit rejected this request. Check the account notice on the page.', { code: 'REDDIT_FORBIDDEN', status });
+        if (status === 429) throw new Core.RateLimitError('Reddit asked the tool to slow down.', retryAfterMilliseconds(response));
+        throw new Core.ApiError('Reddit rejected the operation.', { code: 'REDDIT_REJECTED' });
+      }
+
       const errors = apiErrors(payload);
       if (errors.length) {
         const first = errors[0];
@@ -260,12 +268,24 @@
       return String(actual ?? '') === String(expected);
     }
 
-    async isDeleted(fullname) {
+    async getDeletionStatus(fullname) {
       const child = await this.getThing(fullname);
-      if (!child) return false;
-      const author = String(child.data?.author || '').toLowerCase();
-      const text = String(child.kind === 't1' ? child.data?.body ?? '' : child.data?.selftext ?? '').toLowerCase();
-      return author === '[deleted]' && ['', '[deleted]'].includes(text);
+      if (!child) return { status: 'missing' };
+      const data = child.data;
+      const text = String(child.kind === 't1' ? data.body ?? '' : data.selftext ?? '');
+      const deletedAuthor = data.author === null || String(data.author).toLowerCase() === '[deleted]';
+      const deleted = data.removed_by_category === 'deleted'
+        || (deletedAuthor && ['', '[deleted]'].includes(text.trim().toLowerCase()));
+      return {
+        status: deleted ? 'deleted' : 'present',
+        owned: Boolean(this.username && sameUsername(data.author, this.username)),
+        editable: child.kind === 't1' || data.is_self === true,
+        text
+      };
+    }
+
+    async isDeleted(fullname) {
+      return (await this.getDeletionStatus(fullname)).status === 'deleted';
     }
 
     async delete(fullname) {

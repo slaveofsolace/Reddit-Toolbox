@@ -282,5 +282,60 @@
     .item a { color: var(--rt-accent); font-size: 12px; }
     .item-text { margin: 8px 0; }
     .item-text div { white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 0; }
+
+    .panel { max-height: calc(100dvh - 16px); max-width: calc(100vw - 16px); border-radius: 12px; container-type: inline-size; }
+    .header { flex: 0 0 auto; gap: 7px; padding: 11px 12px; cursor: grab; touch-action: none; user-select: none; }
+    .header .brand { flex: 1; }
+    .brand strong { font-size: 15px; }
+    .brand span { font-size: 11px; }
+    .brand small { margin-left: 5px; font-size: 10px; opacity: .75; }
+    .move-window { cursor: grab; font-size: 24px; width: 24px; }
+    .interacting .header, .interacting .move-window { cursor: grabbing; }
+    .launcher { touch-action: none; }
+    .launcher:hover { transform: none; }
+    .content { flex: 1 1 auto; padding: 16px; overscroll-behavior: contain; }
+    .account-line { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin-bottom: 18px; color: var(--rt-muted); font-size: 12px; }
+    .account-line a { color: var(--rt-accent); }
+    .section { gap: 11px; margin-bottom: 20px; }
+    .section-title h2 { font-size: 14px; letter-spacing: 0; }
+    .checks { gap: 20px; }
+    .advanced { border-top: 1px solid var(--rt-border); padding-top: 10px; }
+    .help { color: var(--rt-muted); font-size: 11px; line-height: 1.5; margin: 0; overflow-wrap: anywhere; }
+    .advanced .help { margin: 9px 0; }
+    .advanced .utility-actions { margin-top: 12px; }
+    .button { border-radius: 7px; min-height: 36px; padding: 7px 12px; font-size: 12px; }
+    .scan { width: 100%; }
+    .text-button { background: transparent; border-color: transparent; min-height: 26px; padding: 2px 4px; color: var(--rt-accent); }
+    .selection-summary { display: flex; gap: 5px 14px; flex-wrap: wrap; font-size: 12px; align-items: baseline; }
+    .selection-summary .found-total { color: var(--rt-muted); margin-left: auto; }
+    .preview { max-height: none; overflow: visible; border-radius: 8px; }
+    .preview-empty { padding: 18px 10px; }
+    .item { padding: 11px; gap: 5px; }
+    .item .actions { margin-top: 2px; }
+    .item-text { margin: 0; font-size: 11px; }
+    .item-status.unconfirmed { color: var(--rt-warning); }
+    .run-section { flex: 0 0 auto; display: grid; gap: 7px; padding: 12px 20px 20px; border-top: 1px solid var(--rt-border); background: var(--rt-bg); }
+    .run-section .current-action { min-height: 0; padding: 0; background: none; border: 0; font-size: 12px; font-weight: 600; }
+    .run-section .status-line { font-size: 11px; }
+    .batch-summary { display: flex; gap: 6px 16px; flex-wrap: wrap; font-size: 12px; }
+    .batch-summary span { white-space: nowrap; }
+    .delete-note { margin: 0; color: var(--rt-muted); font-size: 11px; }
+    .run-actions { flex-wrap: wrap; }
+    .run-actions .start { width: 100%; font-size: 13px; min-height: 40px; }
+    .run-actions .pause, .run-actions .stop { flex: 1; }
+    .run-details { margin: 12px 0; font-size: 12px; }
+    .detail-metrics { display: flex; gap: 10px; flex-wrap: wrap; color: var(--rt-muted); font-size: 11px; margin-bottom: 8px; }
+    .resize-handle { position: absolute; bottom: 0; border: 0; background: transparent; color: var(--rt-muted); width: 24px; height: 22px; padding: 0; touch-action: none; opacity: .65; font-size: 17px; z-index: 2; }
+    .resize-left { left: 0; cursor: nesw-resize; transform: rotate(90deg); }
+    .resize-right { right: 0; cursor: nwse-resize; }
+    button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--rt-accent); outline-offset: 2px; }
+    .resize-handle:focus-visible { outline-offset: -3px; opacity: 1; }
+    @container (max-width: 390px) {
+      .grid { grid-template-columns: 1fr; }
+      .compact-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .field.full { grid-column: auto; }
+      .content { padding: 12px; }
+      .selection-summary .found-total { margin-left: 0; }
+    }
   `;
 })();

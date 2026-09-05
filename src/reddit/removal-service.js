@@ -15,6 +15,7 @@
       this.maximumSettleMs = Math.max(this.minimumSettleMs, Number(options.maximumSettleMs) || 1_500);
       this.verificationAttempts = Math.max(1, Math.min(5, Math.trunc(Number(options.verificationAttempts) || 3)));
       this.verificationDelayMs = Math.max(100, Number(options.verificationDelayMs) || 750);
+      this.deletionVerificationAttempts = Math.max(2, Math.min(8, Number(options.deletionVerificationAttempts) || 6));
       this.sleep = options.sleep || Core.wait;
       this.random = options.random || Math.random;
       this.randomSource = options.randomSource || globalThis.crypto;
@@ -33,7 +34,9 @@
           replacement: '',
           editSent: false,
           edited: false,
-          deleteSent: false
+          deleteSent: false,
+          deleteAcknowledged: false,
+          deleteAttempts: 0
         });
       }
       return this.states.get(fullname);
@@ -66,6 +69,7 @@
         const target = await this.client.inspectTarget(item.fullname);
         if (!target.available || !target.owned) throw new Core.ApiError('Ownership could not be verified.', { code: 'OWNERSHIP_NOT_VERIFIED' });
         if (target.editable !== (item.editable !== false)) throw new Core.ApiError('Live editability differs from the reviewed batch. Prepare a new review.', { code: 'EDITABILITY_CHANGED' });
+        state.ownershipVerified = true;
         return;
       }
       if (typeof this.client.verifyOwnership !== 'function') {
@@ -81,23 +85,69 @@
       state.ownershipVerified = true;
     }
 
-    async verifyDeleted(item, state) {
+    async verifyDeleted(item, state, context = {}, allowResend = true) {
       if (!this.verifyDeletion) return true;
-      if (typeof this.client.isDeleted !== 'function') {
+      await this.ensureSession();
+      if (typeof this.client.isDeleted !== 'function' && typeof this.client.getDeletionStatus !== 'function') {
         throw new Core.PauseRequiredError(
           'The delete request was sent, but this adapter cannot verify the result.',
           { code: 'DELETE_RESULT_UNVERIFIED' }
         );
       }
-      const deleted = await this.verifyWithRetries(() => this.client.isDeleted(item.fullname));
-      if (!deleted) {
-        throw new Core.PauseRequiredError(
-          'The delete request was sent, but Reddit has not confirmed the result. Inspect the item before resuming.',
-          { code: 'DELETE_RESULT_UNCERTAIN' }
-        );
+      let missingReads = 0;
+      let presentReads = 0;
+      let last;
+      for (let attempt = 0; attempt < this.deletionVerificationAttempts; attempt += 1) {
+        last = typeof this.client.getDeletionStatus === 'function'
+          ? await this.client.getDeletionStatus(item.fullname)
+          : { status: await this.client.isDeleted(item.fullname) ? 'deleted' : 'unknown' };
+        missingReads = last.status === 'missing' ? missingReads + 1 : 0;
+        presentReads = last.status === 'present' && last.owned ? presentReads + 1 : 0;
+        if (last.status === 'deleted'
+          || (missingReads >= 2 && state.deleteAcknowledged && state.ownershipVerified)) {
+          state.completed = true;
+          state.deletionEvidence = last.status === 'deleted' ? 'deleted-marker' : 'accepted-and-no-longer-returned';
+          return true;
+        }
+        if (context.isStopRequested?.()) break;
+        if (attempt + 1 < this.deletionVerificationAttempts) {
+          this.report(context, 'verifying-deletion', { attempt: attempt + 1 });
+          await this.sleep(Math.min(6_000, this.verificationDelayMs * (2 ** (attempt + 1))));
+        }
       }
-      state.completed = true;
-      return true;
+
+      // A successful response can be a no-op. Retry once only after repeated live
+      // evidence of the same owned target; never resend an ambiguous request.
+      if (allowResend && !context.isStopRequested?.() && state.deleteAcknowledged
+        && state.deleteAttempts < 2 && presentReads >= 2
+        && last.editable === (item.editable !== false)
+        && (item.editable === false || last.text === state.replacement)) {
+        await context.beforeMutation?.();
+        await this.ensureSession(context);
+        await this.ensureOwnership(item, state);
+        if (item.editable !== false && !await this.client.verifyText(item.fullname, state.replacement)) {
+          throw new Core.ApiError('The saved text changed. This item needs a new review.', { code: 'OVERWRITE_NOT_VERIFIED' });
+        }
+        this.report(context, 'retrying-delete');
+        await this.sendDelete(item, state);
+        return this.verifyDeleted(item, state, context, false);
+      }
+      throw new Core.ApiError('Deletion is not confirmed yet. Other items can continue; recheck this result when cleanup finishes.', { code: 'DELETE_RESULT_UNCERTAIN' });
+    }
+
+    async sendDelete(item, state) {
+      state.deleteSent = true;
+      state.deleteAcknowledged = false;
+      state.deleteAttempts += 1;
+      try {
+        await this.client.delete(item.fullname);
+        state.deleteAcknowledged = true;
+      } catch (error) {
+        if (!this.isAmbiguousMutationError(error)) {
+          state.deleteSent = false;
+          throw error;
+        }
+      }
     }
 
     isAmbiguousMutationError(error) {
@@ -126,7 +176,7 @@
       if (state.completed) return { status: 'skipped', reason: 'already-completed', deleted: true };
       if (state.deleteSent) {
         this.report(context, 'verifying-deletion');
-        await this.verifyDeleted(item, state);
+        await this.verifyDeleted(item, state, context);
         this.report(context, 'complete');
         return {
           status: 'completed',
@@ -146,17 +196,9 @@
         await this.ensureSession(context);
         await this.ensureOwnership(item, state);
         this.report(context, 'deleting-direct');
-        state.deleteSent = true;
-        try {
-          await this.client.delete(item.fullname);
-        } catch (error) {
-          if (!this.isAmbiguousMutationError(error)) {
-            state.deleteSent = false;
-            throw error;
-          }
-        }
+        await this.sendDelete(item, state);
         this.report(context, 'verifying-deletion');
-        await this.verifyDeleted(item, state);
+        await this.verifyDeleted(item, state, context);
         this.report(context, 'complete');
         return {
           status: 'completed',
@@ -230,17 +272,9 @@
         throw new Core.PauseRequiredError('The saved replacement changed before deletion. No delete was sent.', { code: 'OVERWRITE_NOT_VERIFIED' });
       }
       this.report(context, 'deleting');
-      state.deleteSent = true;
-      try {
-        await this.client.delete(item.fullname);
-      } catch (error) {
-        if (!this.isAmbiguousMutationError(error)) {
-          state.deleteSent = false;
-          throw error;
-        }
-      }
+      await this.sendDelete(item, state);
       this.report(context, 'verifying-deletion');
-      await this.verifyDeleted(item, state);
+      await this.verifyDeleted(item, state, context);
       this.report(context, 'complete');
       return {
         status: 'completed',

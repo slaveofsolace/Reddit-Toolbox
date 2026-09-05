@@ -4,7 +4,7 @@ Reddit Toolbox runs in your Reddit tab. It has no backend, telemetry, external c
 
 ## Stored locally
 
-Only interface and cleanup preferences are saved through Tampermonkey storage, with browser local storage as a fallback. RC4 removes the obsolete public client ID saved by RC3.
+Only interface preferences (including window and launcher geometry) and cleanup preferences are saved through Tampermonkey storage, with browser local storage as a fallback. RC4 removes the obsolete public client ID saved by RC3.
 
 ## Kept in memory
 
@@ -14,7 +14,7 @@ The detected username, Reddit session action token, profile results, imported CS
 
 ## Explicit exports
 
-**Export selected content** creates a local JSON backup containing the account and reviewed content. **Export run log** creates a sanitized local ledger with ordinal item numbers, type, status, and error codes. It excludes usernames, content IDs, subreddit names, permalinks, original text, and replacements. You choose whether and where to save these files.
+**Save a copy** creates a local JSON backup containing the account and reviewed content. **Save run log** creates a sanitized local ledger with ordinal item numbers, type, status, and error codes. It excludes usernames, content IDs, subreddit names, permalinks, original text, and replacements. You choose whether and where to save these files.
 
 ## Network boundary
 
