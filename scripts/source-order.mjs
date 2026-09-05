@@ -8,6 +8,7 @@ export const sourceOrder = [
   'src/core/runner.js',
   'src/core/storage.js',
   'src/reddit/model.js',
+  'src/reddit/request-pacer.js',
   'src/reddit/api.js',
   'src/reddit/scanner.js',
   'src/reddit/removal-service.js',

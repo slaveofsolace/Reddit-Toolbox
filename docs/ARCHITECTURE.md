@@ -20,8 +20,9 @@ src/main.js     product bootstrap
 | Bind review to exact targets and options | `src/core/plan.js` |
 | Execute the complete queue automatically | `src/core/runner.js` |
 | Isolate platform requests | `src/reddit/api.js` |
+| Pace every request and share reset deadlines | `src/reddit/request-pacer.js` |
 | Coordinate overwrite and deletion | `src/reddit/removal-service.js` |
-| Persist only safe preferences | `src/core/storage.js` |
+| Persist preferences and anonymous timing deadlines | `src/core/storage.js` |
 | Present scope → find and review → Delete | `src/ui/*` |
 
 ## Automated batch model
@@ -40,6 +41,8 @@ After the user selects the explicit Delete button for that review, one `BatchRun
 The short digest is a display identifier. Validation also compares the complete canonical binding retained in a private in-memory map, so digest collisions cannot authorize a different batch. Target snapshots and execution options are frozen when execution begins. Deserialized plans are not authorized after reload.
 
 Requests remain sequential. Automation means hands-off orchestration, not concurrent destructive calls.
+
+The session adapter submits all reads and writes to RequestPacer. A fixed 7.5-second minimum interval caps toolbox traffic at eight requests per minute. It increases the interval from remaining/reset headers before exhaustion, preserving 20% of reported allowance, and waits through the reset boundary when fewer than two whole requests remain. HTTP or JSON rate-limit rejections persist a cooldown. The request lock is separate from the whole-batch lock and coordinates scans, identity reads, and rechecks too. Only the next-request and cooldown timestamps are saved, allowing fresh tabs and reloads to retain the budget. The transport timeout starts after admission; waiting requests check pause or recheck cancellation before sending. The UI has no speed control, and old pacing preferences are discarded when settings load.
 
 ### Batch states
 

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadToolbox } from './load-toolbox.mjs';
+import { virtualPacer } from './virtual-pacer.mjs';
 
 function response(payload, status = 200) {
   return {
@@ -16,10 +17,10 @@ test('assertSession pauses when the signed-in Reddit account changes', async () 
     files: [
       'src/core/namespace.js',
       'src/core/errors.js',
-      'src/reddit/api.js'
+    'src/core/storage.js', 'src/reddit/request-pacer.js', 'src/reddit/api.js'
     ]
   });
-  const client = new Reddit.RedditSessionClient({
+  const client = new Reddit.RedditSessionClient({ pacer: virtualPacer(Reddit),
     origin: 'https://www.reddit.com',
     fetchImpl: async () => response({ data: { name: 'other-account', modhash: 'fresh' } })
   });

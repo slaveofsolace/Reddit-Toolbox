@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadToolbox } from './load-toolbox.mjs';
+import { virtualPacer } from './virtual-pacer.mjs';
 
 const { Core, Reddit } = loadToolbox();
 
@@ -12,7 +13,7 @@ function jsonResponse(payload, options = {}) {
 }
 
 test('getSession reads username and modhash without storing credentials', async () => {
-  const client = new Reddit.RedditSessionClient({
+  const client = new Reddit.RedditSessionClient({ pacer: virtualPacer(Reddit),
     origin: 'https://www.reddit.com',
     fetchImpl: async () => jsonResponse({ data: { name: 'sam', modhash: 'abc' } })
   });
@@ -22,7 +23,7 @@ test('getSession reads username and modhash without storing credentials', async 
 
 test('session reads use the current page login without OAuth or a client key', async () => {
   let request;
-  const client = new Reddit.RedditSessionClient({
+  const client = new Reddit.RedditSessionClient({ pacer: virtualPacer(Reddit),
     origin: 'https://www.reddit.com',
     fetchImpl: async (url, init) => {
       request = { url, init };
@@ -40,7 +41,7 @@ test('session reads use the current page login without OAuth or a client key', a
 test('logout or a rejected identity read clears the previous action credentials', async () => {
   for (const failure of [jsonResponse({ data: {} }), jsonResponse({}, { status: 401 }), jsonResponse({}, { status: 403 })]) {
     let response = jsonResponse({ data: { name: 'sam', modhash: 'previous-session' } });
-    const client = new Reddit.RedditSessionClient({ origin: 'https://www.reddit.com', fetchImpl: async () => response });
+    const client = new Reddit.RedditSessionClient({ pacer: virtualPacer(Reddit), origin: 'https://www.reddit.com', fetchImpl: async () => response });
     await client.getSession(true);
     response = failure;
     await assert.rejects(client.getSession(true));
@@ -52,7 +53,7 @@ test('logout or a rejected identity read clears the previous action credentials'
 
 
 test('getSession can scan without a modhash but requires one for actions', async () => {
-  const client = new Reddit.RedditSessionClient({
+  const client = new Reddit.RedditSessionClient({ pacer: virtualPacer(Reddit),
     origin: 'https://www.reddit.com',
     fetchImpl: async () => jsonResponse({ data: { name: 'sam', modhash: '' } })
   });
@@ -63,7 +64,7 @@ test('getSession can scan without a modhash but requires one for actions', async
 
 test('listUserContent paginates with after and normalizes children', async () => {
   const requests = [];
-  const client = new Reddit.RedditSessionClient({
+  const client = new Reddit.RedditSessionClient({ pacer: virtualPacer(Reddit),
     origin: 'https://www.reddit.com',
     username: 'sam',
     modhash: 'abc',
@@ -86,7 +87,7 @@ test('listUserContent paginates with after and normalizes children', async () =>
 
 test('edit and delete send documented fullname fields and modhash', async () => {
   const requests = [];
-  const client = new Reddit.RedditSessionClient({
+  const client = new Reddit.RedditSessionClient({ pacer: virtualPacer(Reddit),
     origin: 'https://www.reddit.com',
     username: 'sam',
     modhash: 'test-modhash',
@@ -106,7 +107,7 @@ test('edit and delete send documented fullname fields and modhash', async () => 
 });
 
 test('verifyText reads comment or self-post text', async () => {
-  const client = new Reddit.RedditSessionClient({
+  const client = new Reddit.RedditSessionClient({ pacer: virtualPacer(Reddit),
     origin: 'https://www.reddit.com',
     username: 'sam',
     modhash: 'test-modhash',
@@ -117,7 +118,7 @@ test('verifyText reads comment or self-post text', async () => {
 });
 
 test('HTTP 429 becomes a RateLimitError with Retry-After', async () => {
-  const client = new Reddit.RedditSessionClient({
+  const client = new Reddit.RedditSessionClient({ pacer: virtualPacer(Reddit),
     origin: 'https://www.reddit.com',
     fetchImpl: async () => jsonResponse({}, { status: 429, headers: { 'retry-after': '2' } })
   });
@@ -129,27 +130,26 @@ test('HTTP 429 becomes a RateLimitError with Retry-After', async () => {
 });
 
 test('Reddit reset headers gate further requests after the last successful allowance', async () => {
-  let now = 1000;
   let calls = 0;
-  const client = new Reddit.RedditSessionClient({ now: () => now, fetchImpl: async () => {
+  const client = new Reddit.RedditSessionClient({ pacer: virtualPacer(Reddit), fetchImpl: async () => {
     calls++;
     return jsonResponse({}, { headers: { 'x-ratelimit-remaining': '0.0', 'x-ratelimit-reset': '12' } });
   }});
   await client.getJson('/api/info.json');
-  await assert.rejects(client.getJson('/api/info.json'), error => error.code === 'RATE_LIMITED' && error.retryAfterMs === 13000);
+  assert.equal(client.pacer.now(), 0);
   assert.equal(calls, 1);
-  now += 13001;
   await client.getJson('/api/info.json');
+  assert.equal(client.pacer.now(), 13000);
   assert.equal(calls, 2);
 });
 
 test('HTTP 429 uses Reddit reset seconds when Retry-After is absent', async () => {
-  const client = new Reddit.RedditSessionClient({ fetchImpl: async () => jsonResponse({}, { status: 429, headers: { 'x-ratelimit-reset': '507' } }) });
+  const client = new Reddit.RedditSessionClient({ pacer: virtualPacer(Reddit), fetchImpl: async () => jsonResponse({}, { status: 429, headers: { 'x-ratelimit-reset': '507' } }) });
   await assert.rejects(client.getJson('/api/me.json'), error => error.code === 'RATE_LIMITED' && error.retryAfterMs === 508000);
 });
 
 test('API error arrays are surfaced and do not look successful', async () => {
-  const client = new Reddit.RedditSessionClient({
+  const client = new Reddit.RedditSessionClient({ pacer: virtualPacer(Reddit),
     origin: 'https://www.reddit.com',
     username: 'sam',
     modhash: 'test-modhash',
@@ -159,7 +159,7 @@ test('API error arrays are surfaced and do not look successful', async () => {
 });
 
 test('client refuses non-Reddit request origins', () => {
-  const client = new Reddit.RedditSessionClient({
+  const client = new Reddit.RedditSessionClient({ pacer: virtualPacer(Reddit),
     origin: 'https://example.com',
     fetchImpl: async () => jsonResponse({})
   });
@@ -172,7 +172,7 @@ test('ownership and deletion checks bind to the exact fullname', async () => {
     { kind: 't1', data: { name: 't1_c1', author: 'sam', body: 'hello' } },
     { kind: 't1', data: { name: 't1_c1', author: '[deleted]', body: '[deleted]' } }
   ];
-  const client = new Reddit.RedditSessionClient({
+  const client = new Reddit.RedditSessionClient({ pacer: virtualPacer(Reddit),
     origin: 'https://www.reddit.com',
     username: 'sam',
     modhash: 'test-modhash',

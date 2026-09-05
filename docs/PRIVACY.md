@@ -4,7 +4,7 @@ Reddit Toolbox runs in your Reddit tab. It has no backend, telemetry, external c
 
 ## Stored locally
 
-Only interface preferences (including window and launcher geometry) and cleanup preferences are saved through Tampermonkey storage, with browser local storage as a fallback. RC4 removes the obsolete public client ID saved by RC3.
+Interface preferences (including window and launcher geometry), cleanup preferences, and two anonymous request timing deadlines are saved through Tampermonkey storage, with browser local storage as a fallback. The timing values contain no account, content, endpoint, or session data; they prevent reloads and other toolbox tabs from restarting at full speed during a cooldown. Old speed preferences are ignored. The obsolete public client ID saved by RC3 is removed.
 
 ## Kept in memory
 

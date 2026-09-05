@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadToolbox } from './load-toolbox.mjs';
+import { virtualPacer } from './virtual-pacer.mjs';
 
 // Exercise the distributable, including its source order and UI composition.
 const load = (globals) => loadToolbox({ files: ['userscripts/reddit-toolbox.user.js'], globals });
@@ -161,7 +162,7 @@ test('missing cross-tab locking and missing secure randomness fail closed', asyn
 test('deletion verification rejects missing listings, wrong targets and moderation removal', async () => {
   const { Reddit } = load();
   let payload;
-  const client = new Reddit.RedditSessionClient({ origin: 'https://www.reddit.com', fetchImpl: async () => ({ status: 200, ok: true, headers: { get: () => 'application/json' }, text: async () => JSON.stringify(payload) }) });
+  const client = new Reddit.RedditSessionClient({ pacer: virtualPacer(Reddit), origin: 'https://www.reddit.com', fetchImpl: async () => ({ status: 200, ok: true, headers: { get: () => 'application/json' }, text: async () => JSON.stringify(payload) }) });
   payload = { data: { children: [] } };
   assert.equal(await client.isDeleted('t1_a'), false);
   payload = {};
@@ -176,7 +177,7 @@ test('deletion verification rejects missing listings, wrong targets and moderati
 test('transport preserves HTTP attention and Retry-After even when the response body is broken', async () => {
   const { Reddit } = load();
   for (const [status, code] of [[401, 'AUTH_REQUIRED'], [403, 'REDDIT_FORBIDDEN'], [429, 'RATE_LIMITED'], [200, 'RESPONSE_LOST']]) {
-    const client = new Reddit.RedditSessionClient({ origin: 'https://www.reddit.com', modhash: 'fixture-only', fetchImpl: async () => ({ status, ok: status === 200, headers: { get: (key) => key === 'retry-after' ? '90' : 'application/json' }, text: async () => { throw new TypeError('Lost body'); } }) });
+    const client = new Reddit.RedditSessionClient({ pacer: virtualPacer(Reddit), origin: 'https://www.reddit.com', modhash: 'fixture-only', fetchImpl: async () => ({ status, ok: status === 200, headers: { get: (key) => key === 'retry-after' ? '90' : 'application/json' }, text: async () => { throw new TypeError('Lost body'); } }) });
     await assert.rejects(client.delete('t1_a'), (error) => error.code === code && (status !== 429 || error.retryAfterMs === 90000));
   }
 });
@@ -220,7 +221,7 @@ test('pause and stop during a long rate-limit wait do not start the next item', 
 
 test('requests have a bounded timeout and reject noncanonical destructive origins', async () => {
   const { Reddit } = load();
-  const client = new Reddit.RedditSessionClient({ requestTimeoutMs: 100, fetchImpl: (_url, { signal }) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('Timed out')))) });
+  const client = new Reddit.RedditSessionClient({ pacer: virtualPacer(Reddit), requestTimeoutMs: 100, fetchImpl: (_url, { signal }) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('Timed out')))) });
   await assert.rejects(client.getSession(), { code: 'NETWORK_ERROR' });
   for (const origin of ['https://old.reddit.com', 'https://new.reddit.com', 'https://sh.reddit.com']) {
     client.origin = origin;

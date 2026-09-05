@@ -17,8 +17,6 @@
     deleteUneditablePosts: false,
     verifyOverwrite: true,
     replacementLength: 24,
-    minimumDelaySeconds: 4.5,
-    maximumDelaySeconds: 8.5,
     continueOnFailure: true,
     maxConsecutiveFailures: 5
   });
@@ -30,12 +28,13 @@
     <aside class="panel" id="rt-panel" role="dialog" aria-label="Reddit Toolbox" aria-modal="false">
       <header class="header">
         <button class="icon-button move-window" type="button" aria-label="Move window" title="Drag to move. Arrow keys move; Shift moves farther.">⠿</button>
-        <div class="brand"><strong>Reddit Toolbox</strong><span>Your Reddit history <small>RC6</small></span></div>
+        <div class="brand"><strong>Reddit Toolbox</strong><span>Your Reddit history <small>RC7</small></span></div>
         <button class="icon-button reset-window" type="button" aria-label="Reset window layout" title="Reset size and position">↺</button>
         <button class="icon-button close" type="button" aria-label="Close">✕</button>
       </header>
       <div class="content">
         <div class="account-line"><span class="account-status" role="status">Uses your signed-in Reddit account</span><a class="canonical-link" href="https://www.reddit.com/" target="_blank" rel="noopener noreferrer">Open www.reddit.com</a></div>
+        <div class="status-line request-status" role="status"></div>
         <section class="section scope-section">
           <div class="section-title"><h2>What would you like to delete?</h2></div>
           <div class="checks"><label class="check"><input id="include-comments" type="checkbox"> Comments</label><label class="check"><input id="include-posts" type="checkbox"> Posts</label></div>
@@ -51,10 +50,9 @@
               <div class="field full"><label for="keep-subreddits">Keep these subreddits</label><input id="keep-subreddits" type="text" placeholder="askscience, personalfinance"></div>
               <div class="field"><label for="keep-score">Keep score at or above</label><input id="keep-score" type="number" step="1" placeholder="No score filter"></div>
               <div class="field"><label for="text-includes">Only matching text</label><input id="text-includes" type="text" placeholder="Optional phrase"></div>
-              <div class="field full"><label>Seconds between items</label><div class="grid compact-grid"><input id="minimum-delay" type="number" min="1" max="300" step="0.5" aria-label="Minimum delay seconds"><input id="maximum-delay" type="number" min="1" max="300" step="0.5" aria-label="Maximum delay seconds"></div></div>
             </div>
             <label class="check"><input id="delete-uneditable" type="checkbox"> Also delete link and media posts</label>
-            <p class="help">Link and media posts have no body to overwrite. Post titles stay unchanged. Reddit rate limits are handled automatically.</p>
+            <p class="help">Link and media posts have no body to overwrite. Post titles stay unchanged. Speed adjusts automatically to Reddit’s limits.</p>
             <div class="actions utility-actions"><button class="button import" type="button">Import archive CSV</button><button class="button check-login" type="button">Check login</button><button class="button clear-history" type="button">Clear loaded history</button></div>
             <input class="file-input archive-input" type="file" accept=".csv,text/csv" multiple>
             <p class="help">Profile history can omit older items. Import comments.csv or posts.csv from your Reddit archive to include them.</p>

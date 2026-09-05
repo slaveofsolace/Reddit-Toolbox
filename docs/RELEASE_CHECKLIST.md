@@ -1,10 +1,13 @@
-# RC6 acceptance checklist
+# RC7 acceptance checklist
 
 Userscript first, 2026-09-05. Existing Reddit login; no OAuth, app registration, client ID, or API key.
 
 ## Automated checks
 
-- [x] 89 Node tests; deterministic composition, matching versions, syntax, and SHA-256 checks
+- [x] 99 Node tests; deterministic composition, matching versions, syntax, and SHA-256 checks
+- [x] Every request paced at eight per minute or slower; low allowances slow before exhaustion
+- [x] Shared request slots and cooldowns across same-origin tabs/reloads; lost responses consume a slot
+- [x] Legacy speed preferences ignored; speed controls removed; cancellation during admission waits
 - [x] Account-bound frozen targets, mutation-boundary ownership/editability and saved-text checks
 - [x] Explicit deleted markers and acknowledged deletions followed by repeated valid absent reads
 - [x] Missing data alone, mismatched IDs, malformed listings, and moderation removal rejected as deletion evidence
@@ -16,7 +19,11 @@ Userscript first, 2026-09-05. Existing Reddit login; no OAuth, app registration,
 
 ## Browser acceptance
 
-Run the generated userscript in isolated Chromium and Firefox using **npm run test:browser**. All traffic is intercepted and all content is synthetic. The fixture uses the production session adapter and runner. It shortens verification delays only for the uncertain/no-op cases and uses a one-second between-item preference. This proves the tested application behavior, not live Reddit compatibility or extension installation.
+Run the generated userscript in isolated Chromium and Firefox using **npm run test:browser**. All traffic is intercepted and all content is synthetic. The fixture uses the production session adapter, request scheduler, and runner, with an accelerated scheduler clock. It also shortens verification delays for uncertain/no-op cases. Obsolete fast preferences are deliberately loaded to verify migration. These checks prove the tested application behavior, not live Reddit compatibility or extension installation.
+
+**npm run test:pacing** separately exercises the exact generated script in Chromium with real clocks and no pacing overrides. It scans an empty synthetic account and checks login in another tab, verifying spacing between all four read-only requests and the absence of speed controls. It sends no live Reddit traffic or mutations.
+
+On 2026-09-05 that real-clock check passed: the four requests were separated by 7,501 ms, 7,503 ms, and 7,501 ms, including the request from a fresh tab. The exact generated artifact was 152,450 bytes. The old zero-delay preferences did not accelerate any request. The receipt is work/browser-rc7/real-time-pacing.json in the project handoff folder.
 
 For local development, install optional test tooling with **npm install --no-save --package-lock=false playwright**, then **npx playwright install chromium firefox**. The script also accepts REDDIT_TOOLBOX_PLAYWRIGHT_MODULE for an existing installation and REDDIT_TOOLBOX_BROWSER_OUTPUT for an evidence directory. Screenshots/results default to ignored artifacts/browser.
 
@@ -25,6 +32,7 @@ For local development, install optional test tooling with **npm install --no-sav
 | Find → automatic review → one Delete action; two comments and mixed content | Pass | Pass |
 | Deleted-author/removed-body live response, null author, accepted-and-absent deletion | Pass | Pass |
 | Explicit No limit and Set a limit choices | Pass | Pass |
+| Automatic request pacing and removal of saved speed preferences | Pass | Pass |
 | Initial identity rate limit automatically recovers inside the runner | Pass | Pass |
 | Lost response marks one item unconfirmed and continues the next | Pass | Pass |
 | Read-only recheck, cooldown recovery and cancellation without another POST | Pass | Pass |
@@ -38,7 +46,11 @@ For local development, install optional test tooling with **npm install --no-sav
 | Light desktop/dark narrow rendering and keyboard focus | Pass | Pass |
 | Unexpected console/runtime errors | None | None |
 
-Local evidence is retained under work/browser-rc6 in the project handoff folder. The test's simulated lost response intentionally produces a browser network error.
+Local evidence is retained under work/browser-rc7 in the project handoff folder. The test's simulated lost response intentionally produces a browser network error.
+
+## RC7 installation checkpoint
+
+The owner reported another rate limit during a larger RC6 run. Chrome background control found that run with 16 deleted, no unconfirmed/failed items, and 344 remaining out of 360. It was paused through the UI during the cooldown, preserving the review. No new deletion was started for RC7 testing. RC7 installation is pending the owner's Tampermonkey Update click; the extension update-page URL policy remains in force. RC6 live deletion evidence below does not establish RC7 installed acceptance.
 
 ## RC6 live coverage
 

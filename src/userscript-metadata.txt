@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Toolbox
 // @namespace    https://github.com/slaveofsolace
-// @version      1.0.0-rc.6
+// @version      1.0.0-rc.7
 // @description  Automatically overwrite and delete selected Reddit posts and comments in one reviewed batch.
 // @author       slaveofsolace
 // @license      MIT

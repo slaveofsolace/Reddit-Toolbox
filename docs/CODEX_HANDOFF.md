@@ -1,6 +1,16 @@
 # Codex handoff
 
-## Current checkpoint: RC6 live acceptance complete
+## Current checkpoint: RC7 automatic request pacing
+
+RC7 removes speed preferences and replaces item-level pacing with admission control for every request. The minimum interval is 7.5 seconds (at most eight requests per minute). Remaining/reset headers slow requests before exhaustion, preserving headroom; HTTP and JSON rate-limit responses persist cooldowns. A separate Web Lock and anonymous timing deadlines coordinate same-origin toolbox tabs and survive reloads. The network timeout starts after admission. Waiting requests respect pause and read-only recheck cancellation. The UI shows a countdown in a stable space; old saved speed values are ignored.
+
+99 Node tests and the isolated Chromium/Firefox fixtures pass. Those fixtures advance only the scheduler clock. The separate npm run test:pacing fixture uses the unmodified generated userscript with real clocks and synthetic read-only traffic to verify scan/login spacing across tabs. Evidence lives under work/browser-rc7 in the project handoff folder.
+
+Chrome background control found the owner's newer RC6 No limit batch waiting on another rate limit. It was paused at 16 deleted, 0 needing recheck, 0 failed, and 344 remaining out of 360. Preserve that tab; do not resume its old code. RC7 installation awaits the owner's Update click because the extension update-page URL policy still blocks automation. No new live deletion was started during RC7 testing. After the update, use a fresh tab to verify RC7 and perform read-only pacing acceptance; do not reload away the paused review as a side effect.
+
+Reddit's historical non-OAuth publication states ten requests per minute, while current guidance warns that throttling can vary. Eight is a conservative tool ceiling, not a promise that Reddit never rate-limits shared/account-specific traffic. Sources and the algorithm are documented in API_ACCESS.md. The product remains userscript first with the existing browser session.
+
+## Previous RC6 live acceptance
 
 RC6 implementation b8f73f239330bf666850e4360c6d08f6d6923b25 is committed and pushed to main. CI and Build userscript passed. The public userscript and checksum match the local 149,057-byte artifact, SHA-256 dbf423695ab736feda82f7c6aa39390de5f5b92c62a76e61c1e254a10f131645. The owner completed the Tampermonkey update, and a fresh Chrome Reddit tab displayed RC6.
 
@@ -24,7 +34,7 @@ The original RC5 tab remains stopped at six processed and 294 stopped rows. Two 
 
 ## Validation and remaining coverage
 
-Build with npm ci and npm run check: 89 Node tests pass, with deterministic composition, matching versions, syntax, and SHA-256 checks. npm run test:browser runs the portable isolated Chromium/Firefox fixture; both passed. Optional tooling instructions and coverage are in [the release checklist](RELEASE_CHECKLIST.md). Synthetic fixtures include the live response shape, rate-limit recovery, recheck cancellation, resizing, persistence, keyboard controls, cross-tab locking, and large archive review.
+Build with npm ci and npm run check: 99 Node tests pass, with deterministic composition, matching versions, syntax, and SHA-256 checks. npm run test:browser runs the portable isolated Chromium/Firefox fixture; both passed. npm run test:pacing checks real timing against synthetic traffic. Optional tooling instructions and coverage are in [the release checklist](RELEASE_CHECKLIST.md). Synthetic fixtures include the live response shape, rate-limit recovery, recheck cancellation, resizing, persistence, keyboard controls, cross-tab locking, and large archive review.
 
 Installed Chrome comment deletion and No limit are verified live. Live self-post/link/media deletion, live interruption/recovery, and fresh Firefox installation are not claimed. Website session behavior can change independently of this version. No stable-release tag is implied.
 

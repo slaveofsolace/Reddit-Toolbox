@@ -58,7 +58,20 @@ async function exercise(browserType, label) {
     } else throw new Error('Unrecognized fixture endpoint: '+url.pathname);
     return route.fulfill({contentType:'application/json',headers:{'Access-Control-Allow-Origin':'https://www.reddit.com'},body:JSON.stringify(payload)});
   });
-  await context.addInitScript({content:`globalThis.GM_getValue=(key,fallback)=>{const saved=localStorage.getItem(key);return saved?JSON.parse(saved):key.endsWith(':settings')?({...fallback,minimumDelaySeconds:1,maximumDelaySeconds:1}):fallback;};globalThis.GM_setValue=(key,value)=>localStorage.setItem(key,JSON.stringify(value));globalThis.GM_deleteValue=key=>localStorage.removeItem(key);\n${script}`});
+  const virtualClock = `(() => {
+    const initialize = () => {
+      const {Reddit}=globalThis.RedditToolbox;
+      const clock=()=>Math.max(Date.now(),Number(localStorage.getItem('fixture-clock'))||0);
+      // Advance time only in the synthetic fixture; production pacing stays intact.
+      globalThis.__redditToolboxApp.ensureClient().pacer=new Reddit.RequestPacer({now:clock,sleep:async ms=>{
+        localStorage.setItem('fixture-clock',String(clock()+ms));
+        await new Promise(resolve=>setTimeout(resolve,0));
+      }});
+    };
+    if(globalThis.__redditToolboxApp) initialize();
+    else document.addEventListener('DOMContentLoaded',initialize,{once:true});
+  })();`;
+  await context.addInitScript({content:`globalThis.GM_getValue=(key,fallback)=>{const saved=localStorage.getItem(key);return saved?JSON.parse(saved):key.endsWith(':settings')?({...fallback,minimumDelaySeconds:1,maximumDelaySeconds:1}):fallback;};globalThis.GM_setValue=(key,value)=>localStorage.setItem(key,JSON.stringify(value));globalThis.GM_deleteValue=key=>localStorage.removeItem(key);\n${script}\n${virtualClock}`});
   const newPage=async()=>{
     const page=await context.newPage();
     page.on('pageerror',error=>errors.push(error.message));
@@ -68,6 +81,10 @@ async function exercise(browserType, label) {
     await page.locator('.launcher').click();
     assert.equal(await page.locator('#oauth-client').count(),0);
     assert.equal(await page.locator('.connect').count(),0);
+    assert.equal(await page.locator('#minimum-delay,#maximum-delay').count(),0);
+    await page.evaluate(()=>{
+      if ('minimumDelaySeconds' in globalThis.__redditToolboxApp.settings) throw new Error('Legacy speed preference survived migration');
+    });
     return page;
   };
   const prepare=async(page,direct=false)=>{

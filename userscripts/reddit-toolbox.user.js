@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Toolbox
 // @namespace    https://github.com/slaveofsolace
-// @version      1.0.0-rc.6
+// @version      1.0.0-rc.7
 // @description  Automatically overwrite and delete selected Reddit posts and comments in one reviewed batch.
 // @author       slaveofsolace
 // @license      MIT
@@ -27,13 +27,13 @@
 
   const family = globalThis.ToolboxFamily || {};
   family.Core ||= {};
-  family.version = '1.0.0-rc.6';
+  family.version = '1.0.0-rc.7';
 
   const toolbox = globalThis.RedditToolbox || {};
   toolbox.Core = family.Core;
   toolbox.Reddit ||= {};
   toolbox.UI ||= {};
-  toolbox.version = '1.0.0-rc.6';
+  toolbox.version = '1.0.0-rc.7';
 
   globalThis.ToolboxFamily = family;
   globalThis.RedditToolbox = toolbox;
@@ -1120,11 +1120,101 @@
   Reddit.mergeItems = mergeItems;
 })();
 
+/* src/reddit/request-pacer.js */
+(() => {
+  'use strict';
+
+  const { Core, Reddit } = globalThis.RedditToolbox;
+  // Non-OAuth requests have historically received 100 requests per 10 minutes.
+  // Leave headroom and count every read, edit, delete, and verification request.
+  const MINIMUM_REQUEST_INTERVAL_MS = 7_500;
+  const BUDGET_KEY = 'request-budget';
+  const numberHeader = (response, name) => {
+    const raw = response?.headers?.get?.(name);
+    return raw !== null && raw !== undefined && String(raw).trim() !== '' && Number.isFinite(Number(raw))
+      ? Number(raw) : null;
+  };
+
+  class RequestPacer {
+    constructor(options = {}) {
+      this.now = options.now || Date.now;
+      this.sleep = options.sleep || Core.wait;
+      this.store = options.store || new Core.SettingsStore();
+      this.lockManager = options.lockManager === undefined ? globalThis.navigator?.locks : options.lockManager;
+      this.state = { nextRequestAt: 0, cooldownUntil: 0 };
+      this.queue = Promise.resolve();
+    }
+
+    readState() {
+      const saved = this.store.get(BUDGET_KEY, {}) || {};
+      for (const key of ['nextRequestAt', 'cooldownUntil']) {
+        if (Number.isFinite(saved[key]) && saved[key] >= 0) this.state[key] = Math.max(this.state[key], saved[key]);
+      }
+      return this.state;
+    }
+
+    save() {
+      this.store.set(BUDGET_KEY, { ...this.state });
+    }
+
+    defer(milliseconds) {
+      this.readState();
+      this.state.cooldownUntil = Math.max(this.state.cooldownUntil, this.now() + Math.max(1_000, milliseconds));
+      this.save();
+    }
+
+    observe(response) {
+      const remaining = numberHeader(response, 'x-ratelimit-remaining');
+      const reset = numberHeader(response, 'x-ratelimit-reset');
+      if (remaining === null || reset === null || reset <= 0) return;
+      this.readState();
+      const resetMs = Math.ceil(reset * 1_000) + 1_000;
+      // Spend at most 80% of the reported remaining allowance over its window.
+      // With less than two requests left, preserve it until the window resets.
+      const available = Math.floor(Math.floor(remaining) * 0.8);
+      if (available < 1) this.defer(resetMs);
+      else {
+        this.state.nextRequestAt = Math.max(this.state.nextRequestAt, this.now() + Math.ceil(resetMs / available));
+        this.save();
+      }
+    }
+
+    run(operation, { onWait, checkpoint } = {}) {
+      const execute = async () => {
+        let waiting = false;
+        for (;;) {
+          await checkpoint?.();
+          const state = this.readState();
+          const remainingMs = Math.max(state.nextRequestAt, state.cooldownUntil) - this.now();
+          if (remainingMs <= 0) break;
+          waiting = true;
+          onWait?.({ remainingMs, reason: state.cooldownUntil > this.now() ? 'cooldown' : 'pacing' });
+          await this.sleep(Math.min(1_000, remainingMs));
+        }
+        if (waiting) onWait?.({ remainingMs: 0 });
+        this.state.nextRequestAt = this.now() + MINIMUM_REQUEST_INTERVAL_MS;
+        this.save();
+        // The slot is consumed even if transport fails: Reddit may have received it.
+        return operation();
+      };
+      const scheduled = this.queue.then(() => this.lockManager?.request
+        ? this.lockManager.request('reddit-toolbox-requests', { mode: 'exclusive' }, execute)
+        : execute());
+      this.queue = scheduled.catch(() => {});
+      return scheduled.finally(() => onWait?.({ remainingMs: 0 }));
+    }
+  }
+
+  Reddit.MINIMUM_REQUEST_INTERVAL_MS = MINIMUM_REQUEST_INTERVAL_MS;
+  Reddit.RequestPacer = RequestPacer;
+})();
+
 /* src/reddit/api.js */
 (() => {
   'use strict';
 
   const { Core, Reddit } = globalThis.RedditToolbox;
+  let sharedPacer;
 
   function retryAfterMilliseconds(response, fallback = 60_000) {
     const header = response?.headers?.get?.('retry-after');
@@ -1168,8 +1258,9 @@
       this.origin = options.origin || globalThis.location?.origin || 'https://www.reddit.com';
       this.modhash = options.modhash || '';
       this.username = options.username || '';
-      this.rateLimitUntil = 0;
-      this.now = options.now || Date.now;
+      this.pacer = options.pacer || (sharedPacer ||= new Reddit.RequestPacer());
+      this.onRequestWait = options.onRequestWait;
+      this.beforeRequest = options.beforeRequest;
       this.requestTimeoutMs = Math.max(100, Math.min(60_000, Number(options.requestTimeoutMs) || 30_000));
       if (typeof this.fetch !== 'function') throw new Error('Fetch is unavailable.');
     }
@@ -1185,12 +1276,9 @@
 
     async readResponse(response) {
       const contentType = response.headers?.get?.('content-type') || '';
-      const remaining = response.headers?.get?.('x-ratelimit-remaining');
-      if (response.status === 429 || (remaining !== null && remaining !== undefined && remaining !== '' && Number(remaining) <= 0)) {
-        this.rateLimitUntil = Math.max(this.rateLimitUntil, this.now() + retryAfterMilliseconds(response));
-      }
+      this.pacer.observe(response);
       // Interpret definite HTTP rejection before attempting to read a possibly broken body.
-      if (response.status === 429) throw new Core.RateLimitError('Reddit asked the tool to slow down.', retryAfterMilliseconds(response));
+      if (response.status === 429) throw this.rateLimit('Reddit asked the tool to slow down.', retryAfterMilliseconds(response));
       if (response.status === 401) throw new Core.AuthError('Your Reddit session expired. Sign in again, then resume.', { status: 401 });
       if (response.status === 403) throw new Core.PauseRequiredError('Reddit blocked this request. Check the page for an account notice.', { code: 'REDDIT_FORBIDDEN', status: 403 });
       let text;
@@ -1222,7 +1310,7 @@
         const status = Number(payload.error);
         if (status === 401) throw new Core.AuthError();
         if (status === 403) throw new Core.PauseRequiredError('Reddit rejected this request. Check the account notice on the page.', { code: 'REDDIT_FORBIDDEN', status });
-        if (status === 429) throw new Core.RateLimitError('Reddit asked the tool to slow down.', retryAfterMilliseconds(response));
+        if (status === 429) throw this.rateLimit('Reddit asked the tool to slow down.', retryAfterMilliseconds(response));
         throw new Core.ApiError('Reddit rejected the operation.', { code: 'REDDIT_REJECTED' });
       }
 
@@ -1230,7 +1318,7 @@
       if (errors.length) {
         const first = errors[0];
         if (first.code.toUpperCase().includes('RATELIMIT')) {
-          throw new Core.RateLimitError(first.message, rateLimitFromMessage(first.message), {
+          throw this.rateLimit(first.message, rateLimitFromMessage(first.message), {
             details: errors
           });
         }
@@ -1252,11 +1340,20 @@
       return payload;
     }
 
+    rateLimit(message, milliseconds, options) {
+      this.pacer.defer(milliseconds);
+      return new Core.RateLimitError(message, milliseconds, options);
+    }
+
     async request(path, init) {
       const url = this.url(path);
-      if (this.rateLimitUntil > this.now()) {
-        throw new Core.RateLimitError('Waiting for Reddit’s request allowance to reset.', this.rateLimitUntil - this.now());
-      }
+      return this.pacer.run(() => this.sendRequest(url, init), {
+        onWait: this.onRequestWait,
+        checkpoint: () => this.beforeRequest?.()
+      });
+    }
+
+    async sendRequest(url, init) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
       try {
@@ -2198,8 +2295,6 @@
     deleteUneditablePosts: false,
     verifyOverwrite: true,
     replacementLength: 24,
-    minimumDelaySeconds: 4.5,
-    maximumDelaySeconds: 8.5,
     continueOnFailure: true,
     maxConsecutiveFailures: 5
   });
@@ -2211,12 +2306,13 @@
     <aside class="panel" id="rt-panel" role="dialog" aria-label="Reddit Toolbox" aria-modal="false">
       <header class="header">
         <button class="icon-button move-window" type="button" aria-label="Move window" title="Drag to move. Arrow keys move; Shift moves farther.">⠿</button>
-        <div class="brand"><strong>Reddit Toolbox</strong><span>Your Reddit history <small>RC6</small></span></div>
+        <div class="brand"><strong>Reddit Toolbox</strong><span>Your Reddit history <small>RC7</small></span></div>
         <button class="icon-button reset-window" type="button" aria-label="Reset window layout" title="Reset size and position">↺</button>
         <button class="icon-button close" type="button" aria-label="Close">✕</button>
       </header>
       <div class="content">
         <div class="account-line"><span class="account-status" role="status">Uses your signed-in Reddit account</span><a class="canonical-link" href="https://www.reddit.com/" target="_blank" rel="noopener noreferrer">Open www.reddit.com</a></div>
+        <div class="status-line request-status" role="status"></div>
         <section class="section scope-section">
           <div class="section-title"><h2>What would you like to delete?</h2></div>
           <div class="checks"><label class="check"><input id="include-comments" type="checkbox"> Comments</label><label class="check"><input id="include-posts" type="checkbox"> Posts</label></div>
@@ -2232,10 +2328,9 @@
               <div class="field full"><label for="keep-subreddits">Keep these subreddits</label><input id="keep-subreddits" type="text" placeholder="askscience, personalfinance"></div>
               <div class="field"><label for="keep-score">Keep score at or above</label><input id="keep-score" type="number" step="1" placeholder="No score filter"></div>
               <div class="field"><label for="text-includes">Only matching text</label><input id="text-includes" type="text" placeholder="Optional phrase"></div>
-              <div class="field full"><label>Seconds between items</label><div class="grid compact-grid"><input id="minimum-delay" type="number" min="1" max="300" step="0.5" aria-label="Minimum delay seconds"><input id="maximum-delay" type="number" min="1" max="300" step="0.5" aria-label="Maximum delay seconds"></div></div>
             </div>
             <label class="check"><input id="delete-uneditable" type="checkbox"> Also delete link and media posts</label>
-            <p class="help">Link and media posts have no body to overwrite. Post titles stay unchanged. Reddit rate limits are handled automatically.</p>
+            <p class="help">Link and media posts have no body to overwrite. Post titles stay unchanged. Speed adjusts automatically to Reddit’s limits.</p>
             <div class="actions utility-actions"><button class="button import" type="button">Import archive CSV</button><button class="button check-login" type="button">Check login</button><button class="button clear-history" type="button">Clear loaded history</button></div>
             <input class="file-input archive-input" type="file" accept=".csv,text/csv" multiple>
             <p class="help">Profile history can omit older items. Import comments.csv or posts.csv from your Reddit archive to include them.</p>
@@ -2510,7 +2605,7 @@
         fromField: $('.from-field'), throughField: $('.through-field'), maxItems: $('#max-items'), limitMode: $('#limit-mode'), amountField: $('.amount-field'),
         sortOrder: $('#sort-order'), keepSubreddits: $('#keep-subreddits'), keepScore: $('#keep-score'),
         textIncludes: $('#text-includes'), deleteUneditable: $('#delete-uneditable'),
-        minimumDelay: $('#minimum-delay'), maximumDelay: $('#maximum-delay'),
+        requestStatus: $('.request-status'),
         scan: $('.scan'), importButton: $('.import'), archiveInput: $('.archive-input'),
         scanStatus: $('.scan-status'), previewSection: $('.preview-section'), runSection: $('.run-section'),
         foundCount: $('.found-count'), selectedCount: $('.selected-count'),
@@ -2597,16 +2692,9 @@
       this.refs.keepScore.value = settings.keepScoreAtOrAbove;
       this.refs.textIncludes.value = settings.textIncludes;
       this.refs.deleteUneditable.checked = settings.deleteUneditablePosts;
-      this.refs.minimumDelay.value = settings.minimumDelaySeconds;
-      this.refs.maximumDelay.value = settings.maximumDelaySeconds;
     }
 
     readSettingsFromForm() {
-      const minimumDelaySeconds = Math.min(300, Math.max(1, Number(this.refs.minimumDelay.value) || 4.5));
-      const maximumDelaySeconds = Math.min(
-        300,
-        Math.max(minimumDelaySeconds, Number(this.refs.maximumDelay.value) || 8.5)
-      );
       return {
         includeComments: this.refs.includeComments.checked,
         includePosts: this.refs.includePosts.checked,
@@ -2621,8 +2709,6 @@
         deleteUneditablePosts: this.refs.deleteUneditable.checked,
         verifyOverwrite: true,
         replacementLength: 24,
-        minimumDelaySeconds,
-        maximumDelaySeconds,
         continueOnFailure: true,
         maxConsecutiveFailures: 5
       };
@@ -2644,7 +2730,18 @@
     }
 
     ensureClient() {
-      if (!this.client) this.client = new Reddit.RedditSessionClient();
+      if (!this.client) this.client = new Reddit.RedditSessionClient({
+        beforeRequest: async () => {
+          if (this.rechecking && this.recheckCancelled) throw new Core.ApiError('Recheck cancelled.', { code: 'RECHECK_CANCELLED' });
+          await this.runner?.waitWhilePaused();
+        },
+        onRequestWait: ({ remainingMs, reason }) => {
+          if (!this.refs.requestStatus) return;
+          this.refs.requestStatus.textContent = remainingMs > 0
+            ? `${reason === 'cooldown' ? 'Reddit cooldown' : 'Automatic pacing'} · next request in ${Math.ceil(remainingMs / 1_000)}s`
+            : '';
+        }
+      });
       return this.client;
     }
 
@@ -3305,8 +3402,9 @@
         this.removalService = service;
         this.removalServiceClient = client;
         this.runner = new Core.BatchRunner((item, context) => service.remove(item, context), {
-          minimumDelayMs: this.settings.minimumDelaySeconds * 1_000,
-          maximumDelayMs: this.settings.maximumDelaySeconds * 1_000,
+          // Every transport request is paced centrally, including scans and reads.
+          minimumDelayMs: 0,
+          maximumDelayMs: 0,
           maxRetries: 2,
           continueOnFailure: this.plan.options.continueOnFailure,
           maxConsecutiveFailures: this.plan.options.maxConsecutiveFailures,
@@ -3398,6 +3496,7 @@
               row.outcome = { status: 'completed', reason: 'deletion-confirmed', deleted: true };
               break;
             } catch (error) {
+              if (error?.code === 'RECHECK_CANCELLED') break;
               if (error?.code === 'RATE_LIMITED') {
                 const until = Date.now() + Math.max(1_000, Number(error.retryAfterMs) || 60_000);
                 while (!this.recheckCancelled && Date.now() < until) {

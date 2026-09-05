@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadToolbox } from './load-toolbox.mjs';
+import { virtualPacer } from './virtual-pacer.mjs';
 
 function setup(options = {}) {
   const { Core, Reddit } = loadToolbox();
@@ -92,7 +93,7 @@ test('an uncertain item is counted separately and does not block the next review
 test('null authors and explicit deletion metadata are recognized without accepting moderation removal', async () => {
   const { Reddit }=loadToolbox();
   let data;
-  const client=new Reddit.RedditSessionClient({ fetchImpl: async()=>new Response(JSON.stringify({data:{children:[{kind:'t1',data}]}}),{headers:{'content-type':'application/json'}}) });
+  const client=new Reddit.RedditSessionClient({ pacer: virtualPacer(Reddit), fetchImpl: async()=>new Response(JSON.stringify({data:{children:[{kind:'t1',data}]}}),{headers:{'content-type':'application/json'}}) });
   data={name:'t1_target',author:null,body:'[deleted]'};
   assert.equal(await client.isDeleted('t1_target'),true);
   data={name:'t1_target',author:'[deleted]',body:'[removed]'};
@@ -106,7 +107,7 @@ test('null authors and explicit deletion metadata are recognized without accepti
 test('HTTP 200 rejection envelopes are not accepted as successful mutations', async () => {
   const { Reddit }=loadToolbox();
   for (const [payload,code] of [[{success:false},'REDDIT_REJECTED'],[{error:403},'REDDIT_FORBIDDEN']]) {
-    const client=new Reddit.RedditSessionClient({modhash:'fixture-only',fetchImpl:async()=>new Response(JSON.stringify(payload),{headers:{'content-type':'application/json'}})});
+    const client=new Reddit.RedditSessionClient({ pacer: virtualPacer(Reddit),modhash:'fixture-only',fetchImpl:async()=>new Response(JSON.stringify(payload),{headers:{'content-type':'application/json'}})});
     await assert.rejects(client.delete('t1_target'),{code});
   }
 });

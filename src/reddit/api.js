@@ -2,6 +2,7 @@
   'use strict';
 
   const { Core, Reddit } = globalThis.RedditToolbox;
+  let sharedPacer;
 
   function retryAfterMilliseconds(response, fallback = 60_000) {
     const header = response?.headers?.get?.('retry-after');
@@ -45,8 +46,9 @@
       this.origin = options.origin || globalThis.location?.origin || 'https://www.reddit.com';
       this.modhash = options.modhash || '';
       this.username = options.username || '';
-      this.rateLimitUntil = 0;
-      this.now = options.now || Date.now;
+      this.pacer = options.pacer || (sharedPacer ||= new Reddit.RequestPacer());
+      this.onRequestWait = options.onRequestWait;
+      this.beforeRequest = options.beforeRequest;
       this.requestTimeoutMs = Math.max(100, Math.min(60_000, Number(options.requestTimeoutMs) || 30_000));
       if (typeof this.fetch !== 'function') throw new Error('Fetch is unavailable.');
     }
@@ -62,12 +64,9 @@
 
     async readResponse(response) {
       const contentType = response.headers?.get?.('content-type') || '';
-      const remaining = response.headers?.get?.('x-ratelimit-remaining');
-      if (response.status === 429 || (remaining !== null && remaining !== undefined && remaining !== '' && Number(remaining) <= 0)) {
-        this.rateLimitUntil = Math.max(this.rateLimitUntil, this.now() + retryAfterMilliseconds(response));
-      }
+      this.pacer.observe(response);
       // Interpret definite HTTP rejection before attempting to read a possibly broken body.
-      if (response.status === 429) throw new Core.RateLimitError('Reddit asked the tool to slow down.', retryAfterMilliseconds(response));
+      if (response.status === 429) throw this.rateLimit('Reddit asked the tool to slow down.', retryAfterMilliseconds(response));
       if (response.status === 401) throw new Core.AuthError('Your Reddit session expired. Sign in again, then resume.', { status: 401 });
       if (response.status === 403) throw new Core.PauseRequiredError('Reddit blocked this request. Check the page for an account notice.', { code: 'REDDIT_FORBIDDEN', status: 403 });
       let text;
@@ -99,7 +98,7 @@
         const status = Number(payload.error);
         if (status === 401) throw new Core.AuthError();
         if (status === 403) throw new Core.PauseRequiredError('Reddit rejected this request. Check the account notice on the page.', { code: 'REDDIT_FORBIDDEN', status });
-        if (status === 429) throw new Core.RateLimitError('Reddit asked the tool to slow down.', retryAfterMilliseconds(response));
+        if (status === 429) throw this.rateLimit('Reddit asked the tool to slow down.', retryAfterMilliseconds(response));
         throw new Core.ApiError('Reddit rejected the operation.', { code: 'REDDIT_REJECTED' });
       }
 
@@ -107,7 +106,7 @@
       if (errors.length) {
         const first = errors[0];
         if (first.code.toUpperCase().includes('RATELIMIT')) {
-          throw new Core.RateLimitError(first.message, rateLimitFromMessage(first.message), {
+          throw this.rateLimit(first.message, rateLimitFromMessage(first.message), {
             details: errors
           });
         }
@@ -129,11 +128,20 @@
       return payload;
     }
 
+    rateLimit(message, milliseconds, options) {
+      this.pacer.defer(milliseconds);
+      return new Core.RateLimitError(message, milliseconds, options);
+    }
+
     async request(path, init) {
       const url = this.url(path);
-      if (this.rateLimitUntil > this.now()) {
-        throw new Core.RateLimitError('Waiting for Reddit’s request allowance to reset.', this.rateLimitUntil - this.now());
-      }
+      return this.pacer.run(() => this.sendRequest(url, init), {
+        onWait: this.onRequestWait,
+        checkpoint: () => this.beforeRequest?.()
+      });
+    }
+
+    async sendRequest(url, init) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
       try {

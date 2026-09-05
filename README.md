@@ -12,7 +12,7 @@ Choose comments and posts, review the matches, select Delete, and let it run. Ed
 2. Open **[Install Reddit Toolbox](https://raw.githubusercontent.com/slaveofsolace/Reddit-Toolbox/main/userscripts/reddit-toolbox.user.js)** and choose **Install**.
 3. Open [www.reddit.com](https://www.reddit.com/), sign in, and select **RT**.
 
-RC6 fixes a deletion-verification mismatch reproduced on live Reddit and adds an explicit No limit choice. It passes 89 automated tests. Current browser and live coverage are recorded in the [acceptance checklist](docs/RELEASE_CHECKLIST.md).
+RC7 automatically paces every request, including scans and verification, with no speed setting to configure. It passes 99 automated tests. Current browser and live coverage are recorded in the [acceptance checklist](docs/RELEASE_CHECKLIST.md).
 
 ## Clean up
 
@@ -21,7 +21,9 @@ Open RT on **www.reddit.com**. Your existing login is detected automatically. [H
 1. Choose comments, posts, dates, and **No limit** or a specific number of items. Select **Find matching items**.
 2. Review the matches. **Keep** excludes individual items; **Save a copy** exports the selection. Select **Delete N items** to start the reviewed batch.
 
-There is no typed phrase, separate preparation button, or per-item confirmation. Changing a filter updates the review automatically. Refresh history to fetch new records. **More options** holds subreddit and score protection, text matching, pacing, local archive import, login status, and history clearing.
+There is no typed phrase, separate preparation button, or per-item confirmation. Changing a filter updates the review automatically. Refresh history to fetch new records. **More options** holds subreddit and score protection, text matching, local archive import, login status, and history clearing.
+
+Speed is automatic: at most eight requests per minute, including every account check, history page, edit, delete, and verification read. The tool slows further when Reddit reports less remaining allowance. Timing is shared across toolbox tabs on the same origin and remembered across reloads; old speed preferences are ignored. Reddit can apply additional shared or account-specific limits, so cooldowns remain automatic.
 
 Drag the header to move the window; drag either bottom corner to resize it. The RT launcher can also be moved. Size and position are remembered. The header reset button restores the default layout. Keyboard users can focus the move or resize handle and use arrow keys; hold Shift for larger changes.
 
@@ -42,7 +44,7 @@ Profile listings can omit older history. Archives broaden discovery but do not e
 
 ## Privacy and development
 
-Only preferences are saved. The session action token, imported content, reviewed batches, replacements, and progress stay in memory unless you explicitly export content or a sanitized run log. There is no telemetry, remote code, or external cleanup service. [Privacy](docs/PRIVACY.md) · [Security](SECURITY.md).
+Only preferences and anonymous request/cooldown deadlines are saved. The session action token, imported content, reviewed batches, replacements, and progress stay in memory unless you explicitly export content or a sanitized run log. There is no telemetry, remote code, or external cleanup service. [Privacy](docs/PRIVACY.md) · [Security](SECURITY.md).
 
 Node.js 20+ is needed only to develop the script. Run `npm ci` followed by `npm run check`; installation needs neither. The deterministic build has no runtime dependencies and generates `SHA256SUMS.txt`. [Architecture](docs/ARCHITECTURE.md) · [Reference tools](docs/SOURCES.md).
 

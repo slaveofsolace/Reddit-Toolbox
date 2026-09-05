@@ -2,7 +2,7 @@
 
 ## Supported version
 
-Security fixes currently target `1.0.0-rc.6` until a stable release replaces it.
+Security fixes currently target `1.0.0-rc.7` until a stable release replaces it.
 
 ## Reporting
 
@@ -20,7 +20,7 @@ Do not post account data, archive files, session values, or access tokens in a p
 - Ambiguous delete results are counted separately and are not blindly resent, including lost responses and HTTP 5xx results. Other items continue; later rechecks perform reads only and revalidate the account.
 - An acknowledged no-op may receive one bounded retry after repeated reads and fresh account, ownership, editability, and replacement checks.
 - Link and media posts are skipped unless direct deletion is explicitly reviewed.
-- Requests are sequential and paced even though the full batch is automated.
+- Every read and write is serialized and paced at no more than eight requests per minute, slowing further from Reddit's remaining/reset headers. A separate request lock coordinates same-origin tabs; only anonymous admission/cooldown deadlines persist across reloads. User settings cannot accelerate the scheduler.
 - Rate limits and temporary failures recover automatically; repeated failures trigger an attention pause.
 - A Web Locks exclusive lock prevents concurrent batches across tabs on www.reddit.com. Missing lock support blocks execution; there is no in-page fallback.
 - Active runs warn before navigation and are never restored or resumed silently after reload.

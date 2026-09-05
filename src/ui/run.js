@@ -292,8 +292,9 @@
         this.removalService = service;
         this.removalServiceClient = client;
         this.runner = new Core.BatchRunner((item, context) => service.remove(item, context), {
-          minimumDelayMs: this.settings.minimumDelaySeconds * 1_000,
-          maximumDelayMs: this.settings.maximumDelaySeconds * 1_000,
+          // Every transport request is paced centrally, including scans and reads.
+          minimumDelayMs: 0,
+          maximumDelayMs: 0,
           maxRetries: 2,
           continueOnFailure: this.plan.options.continueOnFailure,
           maxConsecutiveFailures: this.plan.options.maxConsecutiveFailures,
@@ -385,6 +386,7 @@
               row.outcome = { status: 'completed', reason: 'deletion-confirmed', deleted: true };
               break;
             } catch (error) {
+              if (error?.code === 'RECHECK_CANCELLED') break;
               if (error?.code === 'RATE_LIMITED') {
                 const until = Date.now() + Math.max(1_000, Number(error.retryAfterMs) || 60_000);
                 while (!this.recheckCancelled && Date.now() < until) {

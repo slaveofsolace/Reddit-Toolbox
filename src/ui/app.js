@@ -74,7 +74,7 @@
         fromField: $('.from-field'), throughField: $('.through-field'), maxItems: $('#max-items'), limitMode: $('#limit-mode'), amountField: $('.amount-field'),
         sortOrder: $('#sort-order'), keepSubreddits: $('#keep-subreddits'), keepScore: $('#keep-score'),
         textIncludes: $('#text-includes'), deleteUneditable: $('#delete-uneditable'),
-        minimumDelay: $('#minimum-delay'), maximumDelay: $('#maximum-delay'),
+        requestStatus: $('.request-status'),
         scan: $('.scan'), importButton: $('.import'), archiveInput: $('.archive-input'),
         scanStatus: $('.scan-status'), previewSection: $('.preview-section'), runSection: $('.run-section'),
         foundCount: $('.found-count'), selectedCount: $('.selected-count'),
@@ -161,16 +161,9 @@
       this.refs.keepScore.value = settings.keepScoreAtOrAbove;
       this.refs.textIncludes.value = settings.textIncludes;
       this.refs.deleteUneditable.checked = settings.deleteUneditablePosts;
-      this.refs.minimumDelay.value = settings.minimumDelaySeconds;
-      this.refs.maximumDelay.value = settings.maximumDelaySeconds;
     }
 
     readSettingsFromForm() {
-      const minimumDelaySeconds = Math.min(300, Math.max(1, Number(this.refs.minimumDelay.value) || 4.5));
-      const maximumDelaySeconds = Math.min(
-        300,
-        Math.max(minimumDelaySeconds, Number(this.refs.maximumDelay.value) || 8.5)
-      );
       return {
         includeComments: this.refs.includeComments.checked,
         includePosts: this.refs.includePosts.checked,
@@ -185,8 +178,6 @@
         deleteUneditablePosts: this.refs.deleteUneditable.checked,
         verifyOverwrite: true,
         replacementLength: 24,
-        minimumDelaySeconds,
-        maximumDelaySeconds,
         continueOnFailure: true,
         maxConsecutiveFailures: 5
       };
@@ -208,7 +199,18 @@
     }
 
     ensureClient() {
-      if (!this.client) this.client = new Reddit.RedditSessionClient();
+      if (!this.client) this.client = new Reddit.RedditSessionClient({
+        beforeRequest: async () => {
+          if (this.rechecking && this.recheckCancelled) throw new Core.ApiError('Recheck cancelled.', { code: 'RECHECK_CANCELLED' });
+          await this.runner?.waitWhilePaused();
+        },
+        onRequestWait: ({ remainingMs, reason }) => {
+          if (!this.refs.requestStatus) return;
+          this.refs.requestStatus.textContent = remainingMs > 0
+            ? `${reason === 'cooldown' ? 'Reddit cooldown' : 'Automatic pacing'} · next request in ${Math.ceil(remainingMs / 1_000)}s`
+            : '';
+        }
+      });
       return this.client;
     }
 

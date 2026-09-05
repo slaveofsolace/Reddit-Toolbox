@@ -23,7 +23,13 @@ test('review leads directly to a clearly labeled delete action without typed con
   assert.match(UI.staticMarkup, />Set a limit<\/option>/);
   assert.match(UI.staticMarkup, /Delete selected items/);
   assert.match(UI.staticMarkup, /Deletion is permanent/);
-  assert.doesNotMatch(UI.staticMarkup, /confirmation-input|Prepare batch|replacement-length/);
+  assert.doesNotMatch(UI.staticMarkup, /confirmation-input|Prepare batch|replacement-length|minimum-delay|maximum-delay|Seconds between items/);
+});
+
+test('old speed preferences cannot change automatic request pacing', () => {
+  const app = new UI.RedditToolboxApp({ store: { get: () => ({ minimumDelaySeconds: 0, maximumDelaySeconds: 0 }) } });
+  assert.equal('minimumDelaySeconds' in app.settings, false);
+  assert.equal('maximumDelaySeconds' in app.settings, false);
 });
 
 test('batch UI exposes progress, pause, stop, and retry controls', () => {

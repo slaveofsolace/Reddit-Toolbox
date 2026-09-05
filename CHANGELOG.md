@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.0-rc.7 — 2026-09-05
+
+- Pace every request automatically, including scans, account checks, overwrite/deletion requests, and verification reads. The fixed 7.5-second minimum interval leaves headroom below the historical non-OAuth allowance; low remaining budgets slow the tool further before exhaustion.
+- Share request slots across same-origin toolbox tabs and retain anonymous timing deadlines across reloads. Honor HTTP and JSON cooldowns without sending early probes.
+- Remove the between-item speed controls and ignore previously saved speed preferences. Show automatic pacing and cooldown countdowns.
+- Preserve request timeouts after admission, pause checkpoints, recheck cancellation, account binding, and verified deletion behavior. Add scheduler and settings-migration regressions; 99 Node tests pass.
+
 ## 1.0.0-rc.6 — 2026-09-05
 
 - Fix the reproduced live verification failure: Reddit returns an author of [deleted] with a body of [removed] for some successfully deleted comments. Confirm this transition only after an acknowledged deletion and verified ownership; moderation removal alone remains insufficient.

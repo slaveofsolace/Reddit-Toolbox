@@ -1,6 +1,6 @@
 # Existing Reddit session
 
-RC6 runs directly inside the Reddit page using the account already signed in to that tab. There is no OAuth registration, consent popup, client ID, API key, client secret, password field, or external service to configure.
+RC7 runs directly inside the Reddit page using the account already signed in to that tab. There is no OAuth registration, consent popup, client ID, API key, client secret, password field, or external service to configure.
 
 ## Use
 
@@ -17,6 +17,14 @@ The script sends same-origin requests with the browser's normal login credential
 History comes from the account's comments/submitted JSON listings. Item checks use /api/info.json; editable bodies use /api/editusertext; deletion uses /api/del. Every mutation remains bound to the reviewed account and exact item, with ownership and saved-text verification.
 
 This is an unofficial integration with Reddit's website session endpoints. It depends on the logged-in website continuing to accept those requests; a fixture test cannot establish live compatibility. It is not a claim of Reddit endorsement or API approval.
+
+## Automatic pacing
+
+Every request passes through one scheduler before network transport. Requests start at least 7.5 seconds apart (at most eight per minute), leaving headroom below Reddit's [published historical non-OAuth limit of ten per minute](https://redditinc.com/news/apifacts). This is a conservative baseline for website-session requests, not a guarantee of their current allowance. Reddit's [current API guidance](https://support.reddithelp.com/hc/en-us/articles/16160319875092-Reddit-Data-API-Wiki) documents the remaining/reset response headers and warns that unidentified clients may receive different throttling.
+
+Positive remaining/reset headers spread requests across the remaining window with 20% headroom. With fewer than two whole requests left, the tool waits until reset. A separate Web Lock coordinates request slots across toolbox tabs on the same origin, and anonymous deadlines survive reloads. HTTP 429 and JSON rate-limit errors persist the cooldown. The network timeout starts only after admission. No speed preferences are exposed or read from old settings.
+
+Reddit's own pages and other clients may share an allowance that the tool cannot control. An additional limit causes a cooldown; no fixed rate can guarantee that Reddit never throttles a request.
 
 ## If a request fails
 
