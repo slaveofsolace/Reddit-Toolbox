@@ -43,6 +43,6 @@ The generated script runs in isolated Playwright browsers with all traffic inter
 - [ ] Live account-change, ownership, uncertain-result, pause/stop and retry behavior
 - [ ] Tampermonkey fresh installation in Chromium and Firefox
 - [ ] Actual update-in-place from RC1 and RC2, including new network grants
-- [ ] Main commit CI and served userscript/checksum verified after merge
+- [x] RC3 merge [55e843b](https://github.com/slaveofsolace/Reddit-Toolbox/commit/55e843bb832ed6c1b62d9a6fcba4f4744a0661e4): [CI](https://github.com/slaveofsolace/Reddit-Toolbox/actions/runs/33956247888) and [build](https://github.com/slaveofsolace/Reddit-Toolbox/actions/runs/33956247907) passed. Public install script and checksum matched the tested 143,248-byte build on 2026-09-05, SHA-256 `16866416b87ca4b247d4a54e2ef104fb7ed4cde414666ebe666d21d7ed74e181`.
 
 No authenticated account test or deletion has been performed. The owner authorized their own content tests, but an approved client connection has not been supplied. Browser Use also previously rejected the Chrome extension-manager route and prohibited workarounds; that route was not retried. The code is a development candidate, without a stable-release or perfected-live-behavior claim.

@@ -2,6 +2,8 @@
 
 RC3 implements the user's userscript-first direction. The product remains one Tampermonkey installation with the extracted platform-neutral core. No backend, companion application, runtime dependency, or external scaffold code was added.
 
+Implementation commit cfacf80 was merged to main as 55e843b through PR #1. Both main workflows passed and the public install script/checksum matched the tested build. The subsequent closeout changes documentation only; see [verification receipt](RELEASE_CHECKLIST.md).
+
 ## Current implementation
 
 - Default userscript OAuth connection for approved installed-app client IDs; in-memory tokens, popup state/source checks, renewal, disconnect, and current-page account comparison.
