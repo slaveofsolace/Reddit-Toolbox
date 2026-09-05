@@ -85,7 +85,9 @@
         this.store.set('settings', this.settings);
         const allItems = this.allItems();
         if (!allItems.length) throw new Error('Scan your profile or import Reddit archive CSV files first.');
-        const session = await this.ensureClient().getSession();
+        const client = this.ensureClient();
+        const localReview = client instanceof Reddit.RedditOAuthClient && !client.connected && !this.profileItems.length;
+        const session = localReview ? { username: '' } : await client.getSession();
         this.username = session.username;
         const selection = Core.selectItems(allItems, {
           ...this.settings,
@@ -97,7 +99,7 @@
         this.renderPlan();
         this.setStatus(
           this.refs.scanStatus,
-          `${selection.selected.length} queued for one automated batch; ${Object.values(selection.skipped).reduce((sum, count) => sum + count, 0)} excluded by filters.`,
+          `${selection.selected.length} selected${this.username ? ' for one automated batch' : ' for local review; connect Reddit and prepare again to enable cleanup'}; ${Object.values(selection.skipped).reduce((sum, count) => sum + count, 0)} excluded by filters.`,
           'success'
         );
       } catch (error) {
@@ -110,6 +112,7 @@
 
     invalidatePlan(message = '') {
       this.plan = null;
+      this.refs.previewNavigation.hidden = true;
       this.refs.confirmationInput.value = '';
       this.refs.confirmationPhrase.textContent = 'DELETE 0 ITEMS';
       this.refs.selectedCount.textContent = '0';
@@ -157,8 +160,8 @@
       const preserved = [filters.keepSubreddits.length ? `keep ${filters.keepSubreddits.map((name) => `r/${name}`).join(', ')}` : '',
         filters.keepScoreAtOrAbove !== null ? `keep score ≥ ${filters.keepScoreAtOrAbove}` : '',
         filters.textIncludes ? 'text filter active' : ''].filter(Boolean).join('; ');
-      this.refs.previewCaption.textContent = `u/${this.plan.options.accountId} · ${source}${incomplete ? ' (listing limited)' : ''}. ${editable} overwrite then delete; ${uneditable} ${this.plan.options.deleteUneditablePosts ? 'direct delete' : 'will skip'}. ${span}; ${filters.sortOrder} first. ${preserved}. Lifetime completeness is not established.`;
-      this.refs.confirmationPhrase.textContent = this.plan.confirmation;
+      this.refs.previewCaption.textContent = `${this.plan.options.accountId ? `u/${this.plan.options.accountId}` : 'Local review · no account connected'} · ${source}${incomplete ? ' (listing limited)' : ''}. ${editable} overwrite then delete; ${uneditable} ${this.plan.options.deleteUneditablePosts ? 'direct delete' : 'will skip'}. ${span}; ${filters.sortOrder} first. ${preserved ? `${preserved}. ` : ''}Lifetime completeness is not established.`;
+      this.refs.confirmationPhrase.textContent = this.plan.options.accountId ? this.plan.confirmation : 'Connect Reddit, then prepare again';
       this.refs.preview.replaceChildren();
       this.refs.processedCount.textContent = '0';
       this.refs.remainingCount.textContent = String(contents.length);
@@ -172,13 +175,36 @@
         ? `Ready · one confirmation will process all ${contents.length} selected items.`
         : 'No matching items.');
 
+      this.previewPage = 0;
+      this.renderPreviewPage(0);
+      this.refs.progress.max = Math.max(1, contents.length);
+      this.refs.progress.value = 0;
+      this.refs.exportBackup.disabled = contents.length === 0;
+      this.refs.retry.disabled = true;
+      this.setLauncherState('idle');
+      this.refreshControls();
+    }
+    excludeFromPlan(id) {
+      if (!this.plan || this.busy || this.connecting || this.plan.startedAt) return;
+      const page = this.previewPage;
+      this.plan = Core.createPlan(this.plan.items.filter((item) => item.id !== id).map((item) => item.content), this.plan.options);
+      this.refs.confirmationInput.value = '';
+      this.renderPlan();
+      this.renderPreviewPage(page);
+      this.setStatus(this.refs.runStatus, 'Item kept. Review the remaining batch and enter its updated confirmation.');
+    }
+
+    renderPreviewPage(page = 0) {
+      const contents = this.plan?.items || [];
+      this.previewPage = Math.min(Math.max(0, page), Math.max(0, Math.ceil(contents.length / 100) - 1));
+      this.refs.preview.replaceChildren();
       if (!contents.length) {
         this.refs.preview.append(Object.assign(document.createElement('div'), {
           className: 'preview-empty',
           textContent: 'No items match the current filters.'
         }));
       } else {
-        for (const queueItem of this.plan.items.slice(0, 100)) {
+        for (const queueItem of this.plan.items.slice(this.previewPage * 100, (this.previewPage + 1) * 100)) {
           const item = queueItem.content;
           const row = document.createElement('div');
           row.className = 'item';
@@ -200,28 +226,55 @@
           const snippet = document.createElement('div');
           snippet.className = 'snippet';
           snippet.textContent = item.title || item.text || item.permalink || item.fullname;
+          const fullText = document.createElement('details');
+          fullText.className = 'item-text';
+          const textSummary = document.createElement('summary');
+          textSummary.textContent = 'Read full text';
+          const textBody = document.createElement('div');
+          textBody.textContent = [item.title, item.text].filter(Boolean).join('\n\n') || 'No editable text in this record.';
+          fullText.append(textSummary, textBody);
           const status = document.createElement('div');
           status.className = `item-status ${queueItem.status}`;
           status.textContent = item.kind === 'post' && !item.editable
             ? (this.plan.options.deleteUneditablePosts ? 'Queued · direct delete (explicitly enabled)' : 'Will skip · direct deletion is disabled')
             : 'Queued · automatic overwrite, verification, and deletion';
-          row.append(head, snippet, status);
+          const actions = document.createElement('div');
+          actions.className = 'actions';
+          if (item.permalink) {
+            try {
+              const url = new URL(item.permalink, 'https://www.reddit.com');
+              if (url.protocol === 'https:' && ['www.reddit.com', 'old.reddit.com', 'new.reddit.com', 'sh.reddit.com'].includes(url.hostname) && !url.username && !url.password) {
+                const link = document.createElement('a');
+                link.href = url.href;
+                link.textContent = 'Open on Reddit';
+                link.target = '_blank';
+                link.rel = 'noopener noreferrer';
+                actions.append(link);
+              }
+            } catch { /* An archive link is optional and never executed. */ }
+          }
+          const keep = document.createElement('button');
+          keep.className = 'button keep-item';
+          keep.type = 'button';
+          keep.textContent = 'Keep this item';
+          keep.disabled = Boolean(this.busy || this.connecting || this.plan.startedAt);
+          keep.addEventListener('click', () => this.excludeFromPlan(queueItem.id));
+          actions.append(keep);
+          row.append(head, snippet, fullText, status, actions);
           this.refs.preview.append(row);
         }
-        if (contents.length > 100) {
-          this.refs.preview.append(Object.assign(document.createElement('div'), {
-            className: 'preview-empty',
-            textContent: `${contents.length - 100} more items are included in this batch.`
-          }));
-        }
       }
-      this.refs.progress.max = Math.max(1, contents.length);
-      this.refs.progress.value = 0;
-      this.refs.exportBackup.disabled = contents.length === 0;
-      this.refs.retry.disabled = true;
-      this.setLauncherState('idle');
-      this.refreshControls();
+
+      this.refs.previewNavigation.hidden = contents.length <= 100;
+      this.refs.previewPrevious.disabled = this.previewPage === 0;
+      this.refs.previewNext.disabled = (this.previewPage + 1) * 100 >= contents.length;
+      this.refs.previewPage.textContent = contents.length ? 'Items ' + (this.previewPage * 100 + 1) + '–' + Math.min(contents.length, (this.previewPage + 1) * 100) + ' of ' + contents.length : '';
+      this.refs.preview.scrollTop = 0;
+      for (const queueItem of this.plan?.items.slice(this.previewPage * 100, (this.previewPage + 1) * 100) || []) {
+        if (queueItem.status !== 'ready') this.updateQueueRow(queueItem);
+      }
     }
+
   }
 
   for (const name of Object.getOwnPropertyNames(ScopeMethods.prototype)) {

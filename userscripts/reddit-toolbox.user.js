@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Toolbox
 // @namespace    https://github.com/slaveofsolace
-// @version      1.0.0-rc.2
+// @version      1.0.0-rc.3
 // @description  Automatically overwrite and delete selected Reddit posts and comments in one reviewed batch.
 // @author       slaveofsolace
 // @license      MIT
@@ -9,12 +9,15 @@
 // @match        https://old.reddit.com/*
 // @match        https://new.reddit.com/*
 // @match        https://sh.reddit.com/*
-// @run-at       document-idle
+// @run-at       document-start
 // @noframes
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_deleteValue
 // @grant        GM_registerMenuCommand
+// @grant        GM_xmlhttpRequest
+// @connect      www.reddit.com
+// @connect      oauth.reddit.com
 // @homepageURL  https://github.com/slaveofsolace/Reddit-Toolbox
 // @supportURL   https://github.com/slaveofsolace/Reddit-Toolbox/issues
 // @downloadURL  https://raw.githubusercontent.com/slaveofsolace/Reddit-Toolbox/main/userscripts/reddit-toolbox.user.js
@@ -27,13 +30,13 @@
 
   const family = globalThis.ToolboxFamily || {};
   family.Core ||= {};
-  family.version = '1.0.0-rc.2';
+  family.version = '1.0.0-rc.3';
 
   const toolbox = globalThis.RedditToolbox || {};
   toolbox.Core = family.Core;
   toolbox.Reddit ||= {};
   toolbox.UI ||= {};
-  toolbox.version = '1.0.0-rc.2';
+  toolbox.version = '1.0.0-rc.3';
 
   globalThis.ToolboxFamily = family;
   globalThis.RedditToolbox = toolbox;
@@ -360,6 +363,9 @@
     if (normalized.keepSubreddits.includes(cleanSubreddit(item.subreddit))) {
       return 'protected-subreddit';
     }
+    if (normalized.keepSubreddits.length && !cleanSubreddit(item.subreddit)) return 'unknown-subreddit';
+    if (normalized.keepScoreAtOrAbove !== null && Number.isFinite(normalized.keepScoreAtOrAbove)
+      && (item.score === null || item.score === undefined || item.score === '' || !Number.isFinite(Number(item.score)))) return 'unknown-score';
     if (
       normalized.keepScoreAtOrAbove !== null
       && Number.isFinite(normalized.keepScoreAtOrAbove)
@@ -1388,6 +1394,264 @@
   Reddit.RedditSessionClient = RedditSessionClient;
 })();
 
+/* src/reddit/oauth.js */
+(() => {
+  'use strict';
+
+  const { Core, Reddit } = globalThis.RedditToolbox;
+  const SITE = 'https://www.reddit.com';
+  const API = 'https://oauth.reddit.com';
+  const REDIRECT = `${SITE}/?reddit-toolbox=oauth-callback`;
+  const SCOPES = ['identity', 'history', 'read', 'edit'];
+  const CALLBACK_TYPE = 'reddit-toolbox:oauth-code';
+
+  function assertCanonicalOrigin(origin = globalThis.location?.origin) {
+    if (origin !== SITE) throw new Core.AuthError('Open www.reddit.com to connect and run cleanup.', { code: 'CANONICAL_ORIGIN_REQUIRED' });
+  }
+
+  function clientId(value) {
+    const id = String(value || '').trim();
+    if (!/^[a-zA-Z0-9_-]{8,80}$/.test(id)) throw new Core.AuthError('Enter the public client ID of your approved Reddit installed app.', { code: 'OAUTH_CLIENT_REQUIRED' });
+    return id;
+  }
+
+  function authorizationUrl(id, state) {
+    const url = new URL('/api/v1/authorize', SITE);
+    url.search = new URLSearchParams({ client_id: clientId(id), response_type: 'code', state,
+      redirect_uri: REDIRECT, duration: 'permanent', scope: SCOPES.join(' ') }).toString();
+    return url.href;
+  }
+
+  // The popup returns only a one-use authorization code. Tokens never enter a URL,
+  // page storage, GM storage, a backup, or the page-facing app object.
+  function receiveOAuthCallback() {
+    if (typeof location === 'undefined') return false;
+    const url = new URL(location.href);
+    if (url.origin !== SITE || url.pathname !== '/' || url.searchParams.get('reddit-toolbox') !== 'oauth-callback') return false;
+    const code = url.searchParams.get('code');
+    const state = url.searchParams.get('state');
+    const error = url.searchParams.has('error');
+    globalThis.history?.replaceState(null, '', `${SITE}/?reddit-toolbox=connection-return`);
+    if (globalThis.opener && /^[a-z]{64}$/.test(state || '')) {
+      globalThis.opener.postMessage({ type: CALLBACK_TYPE, state, code: error ? null : code, denied: error }, SITE);
+    }
+    const show = () => {
+      const message = document.createElement('p');
+      message.textContent = 'Reddit Toolbox: return to the original tab to finish connecting. You can close this tab.';
+      message.style.cssText = 'padding:24px;font:16px system-ui';
+      document.body.replaceChildren(message);
+    };
+    if (document.body) show(); else document.addEventListener('DOMContentLoaded', show, { once: true });
+    return true;
+  }
+
+  function requestAuthorization(id, host = globalThis) {
+    assertCanonicalOrigin(host.location?.origin);
+    const state = Core.randomLetterString(64);
+    const url = authorizationUrl(id, state);
+    return new Promise((resolve, reject) => {
+      let popup;
+      let timer;
+      const cleanup = () => { host.removeEventListener('message', onMessage); clearTimeout(timer); };
+      const onMessage = (event) => {
+        if (event.origin !== SITE || event.source !== popup || event.data?.type !== CALLBACK_TYPE || event.data.state !== state) return;
+        cleanup();
+        popup?.close();
+        if (event.data.denied || typeof event.data.code !== 'string' || !event.data.code || event.data.code.length > 4096) {
+          reject(new Core.AuthError('Reddit authorization was declined. No cleanup started.', { code: 'OAUTH_DENIED' }));
+        } else resolve(event.data.code);
+      };
+      host.addEventListener('message', onMessage);
+      popup = host.open(url, '_blank', 'popup,width=720,height=780');
+      if (!popup) {
+        cleanup();
+        reject(new Core.AuthError('Allow the Reddit authorization popup, then connect again.', { code: 'OAUTH_POPUP_BLOCKED' }));
+        return;
+      }
+      const expires = Date.now() + 300_000;
+      const check = () => {
+        if (popup.closed || Date.now() >= expires) {
+          cleanup();
+          reject(new Core.AuthError('Reddit connection was cancelled or timed out. Connect again when ready.', { code: 'OAUTH_CANCELLED' }));
+        } else timer = setTimeout(check, 500);
+      };
+      timer = setTimeout(check, 500);
+    });
+  }
+
+  function userscriptRequest(url, options = {}, transport = typeof GM_xmlhttpRequest === 'function' ? GM_xmlhttpRequest : null) {
+    if (typeof transport !== 'function') throw new Core.AuthError('Update the script in Tampermonkey to enable its Reddit OAuth permission.', { code: 'USERSCRIPT_PERMISSION_REQUIRED' });
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let request;
+      const finish = (callback, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(watchdog);
+        callback(value);
+      };
+      const fail = () => finish(reject, new Core.ApiError('The Reddit request did not complete.', { code: 'NETWORK_ERROR', retryable: true }));
+      // GM's fetch-backed mode does not honor every native XHR option in every
+      // browser. Keep our own deadline, including when an extension callback is lost.
+      const watchdog = setTimeout(() => { fail(); request?.abort?.(); }, 31_000);
+      try { request = transport({
+        url: String(url), method: options.method || 'GET', headers: options.headers || {},
+        data: options.body ? String(options.body) : undefined,
+        anonymous: true, redirect: 'error', timeout: 30_000,
+        onerror: fail, ontimeout: fail, onabort: fail,
+        onload(response) {
+          if (settled) return;
+          try {
+          const target = new URL(url);
+          const finalUrl = new URL(response.finalUrl || url);
+          if (target.origin !== finalUrl.origin || target.pathname !== finalUrl.pathname) {
+            finish(reject, new Core.PauseRequiredError('Reddit redirected the API request. Its result needs review.', { code: 'API_REDIRECT' }));
+            return;
+          }
+          const headers = new Map(String(response.responseHeaders || '').split(/\r?\n/).map((line) => {
+            const colon = line.indexOf(':');
+            return [line.slice(0, colon).trim().toLowerCase(), line.slice(colon + 1).trim()];
+          }));
+          finish(resolve, { status: response.status, ok: response.status >= 200 && response.status < 300,
+            headers: { get: (name) => headers.get(name.toLowerCase()) || null },
+            text: async () => String(response.responseText || '') });
+          } catch { finish(reject, new Core.ApiError('Reddit returned an unreadable response.', { code: 'UNRECOGNIZED_RESPONSE', retryable: true })); }
+        }
+      }); } catch { fail(); }
+    });
+  }
+
+  class RedditOAuthClient extends Reddit.RedditSessionClient {
+    #accessToken = '';
+    #refreshToken = '';
+    #expiresAt = 0;
+    #clientId = '';
+    #refreshing = null;
+    #queue = Promise.resolve();
+    #nextRequestAt = 0;
+    constructor(options = {}) {
+      super(options);
+      this.send = options.send || userscriptRequest;
+      this.authorize = options.authorize || requestAuthorization;
+      this.sleep = options.sleep || Core.wait;
+      this.siteClient = options.siteClient || new Reddit.RedditSessionClient(options);
+    }
+
+    async connect(id) {
+      assertCanonicalOrigin(this.origin);
+      const registeredId = clientId(id);
+      const code = await this.authorize(registeredId);
+      // Finish validation before replacing any still-usable connection.
+      const tokens = await this.exchange(registeredId, { grant_type: 'authorization_code', code, redirect_uri: REDIRECT });
+      this.#clientId = registeredId;
+      this.#refreshToken = '';
+      this.acceptTokens(tokens);
+      return this.getSession();
+    }
+
+    disconnect() {
+      this.#accessToken = '';
+      this.#refreshToken = '';
+      this.#expiresAt = 0;
+      this.#clientId = '';
+      this.username = '';
+    }
+
+    get connected() { return Boolean(this.#accessToken); }
+
+    async exchange(id, values) {
+      const response = await this.send(`${SITE}/api/v1/access_token`, {
+        method: 'POST',
+        headers: { Authorization: `Basic ${btoa(`${id}:`)}`, Accept: 'application/json',
+          'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'browser:RedditToolbox:1.0.0-rc.3 (by /u/slaveofsolace)' },
+        body: new URLSearchParams(values)
+      });
+      const tokens = await this.readResponse(response);
+      const scopes = String(tokens.scope || '').split(/[ ,]+/);
+      if (tokens.token_type?.toLowerCase() !== 'bearer' || typeof tokens.access_token !== 'string' || !tokens.access_token
+        || !Number.isFinite(Number(tokens.expires_in)) || Number(tokens.expires_in) <= 0
+        || !SCOPES.every((scope) => scopes.includes(scope))) {
+        throw new Core.AuthError('Reddit did not grant all permissions needed for your history cleanup.', { code: 'OAUTH_SCOPE_MISSING' });
+      }
+      return tokens;
+    }
+
+    acceptTokens(tokens) {
+      this.#accessToken = tokens.access_token;
+      if (tokens.refresh_token) this.#refreshToken = tokens.refresh_token;
+      this.#expiresAt = Date.now() + Number(tokens.expires_in) * 1000;
+    }
+
+    async token() {
+      if (!this.#accessToken) throw new Core.AuthError('Connect your Reddit account first.', { code: 'OAUTH_NOT_CONNECTED' });
+      if (Date.now() < this.#expiresAt - 60_000) return this.#accessToken;
+      if (!this.#refreshToken) throw new Core.AuthError('Your connection expired. Connect again, then resume the batch.', { code: 'OAUTH_EXPIRED' });
+      if (!this.#refreshing) {
+        this.#refreshing = (async () => {
+          try { this.acceptTokens(await this.exchange(this.#clientId, { grant_type: 'refresh_token', refresh_token: this.#refreshToken })); }
+          catch { throw new Core.AuthError('Reddit could not renew this connection. Connect again, then resume.', { code: 'OAUTH_EXPIRED' }); }
+          finally { this.#refreshing = null; }
+        })();
+      }
+      await this.#refreshing;
+      return this.#accessToken;
+    }
+
+    url(path) {
+      const url = new URL(path, API);
+      if (url.origin !== API || url.username || url.password || url.hash) throw new Core.ApiError('Unsupported Reddit API destination.', { code: 'API_DESTINATION' });
+      return url;
+    }
+
+    async request(path, options = {}) {
+      assertCanonicalOrigin(this.origin);
+      const url = this.url(path);
+      const method = options.method || 'GET';
+      const allowed = method === 'GET'
+        ? /^\/api\/v1\/me$|^\/api\/info\.json$|^\/user\/[a-zA-Z0-9_-]+\/(comments|submitted)\.json$/.test(url.pathname)
+        : method === 'POST' && ['/api/editusertext', '/api/del'].includes(url.pathname);
+      if (!allowed) throw new Core.ApiError('This API operation is outside Reddit Toolbox history cleanup.', { code: 'API_OPERATION' });
+      const operation = this.#queue.then(async () => {
+        const wait = this.#nextRequestAt - Date.now();
+        if (wait > 1000) throw new Core.RateLimitError('Reddit rate-limit budget is resting.', wait);
+        if (wait > 0) await this.sleep(wait);
+        const token = await this.token();
+        this.#nextRequestAt = Date.now() + 700;
+        const response = await this.send(url.href, { ...options,
+          headers: { ...options.headers, Authorization: `Bearer ${token}`, 'User-Agent': 'browser:RedditToolbox:1.0.0-rc.3 (by /u/slaveofsolace)' } });
+        const remaining = response.headers?.get?.('x-ratelimit-remaining');
+        const reset = Number(response.headers?.get?.('x-ratelimit-reset'));
+        if (remaining !== null && remaining !== undefined && Number(remaining) <= 1 && reset > 0) this.#nextRequestAt = Date.now() + Math.ceil(reset * 1000) + 1000;
+        if (response.status === 401) this.#expiresAt = 0;
+        return this.readResponse(response);
+      });
+      this.#queue = operation.catch(() => {});
+      return operation;
+    }
+
+    async postForm(path, values) {
+      return this.request(path, { method: 'POST', headers: { Accept: 'application/json',
+        'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(values) });
+    }
+
+    async getSession() {
+      const identity = await this.getJson('/api/v1/me');
+      if (!identity?.name) throw new Core.AuthError('Reddit did not return an authorized account.', { code: 'OAUTH_IDENTITY' });
+      const session = await this.siteClient.getSession();
+      if (!Reddit.sameUsername(identity.name, session.username)) throw new Core.PauseRequiredError('The authorized account differs from the signed-in Reddit account. Connect the account shown on this page.', { code: 'ACCOUNT_CHANGED' });
+      this.username = String(identity.name);
+      return { username: this.username };
+    }
+  }
+
+  Reddit.OAUTH_REDIRECT = REDIRECT;
+  Reddit.authorizationUrl = authorizationUrl;
+  Reddit.receiveOAuthCallback = receiveOAuthCallback;
+  Reddit.requestAuthorization = requestAuthorization;
+  Reddit.userscriptRequest = userscriptRequest;
+  Reddit.RedditOAuthClient = RedditOAuthClient;
+})();
+
 /* src/reddit/scanner.js */
 (() => {
   'use strict';
@@ -1591,7 +1855,7 @@
     }
 
     isAmbiguousMutationError(error) {
-      return ['NETWORK_ERROR', 'RESPONSE_LOST', 'INVALID_JSON', 'UNRECOGNIZED_RESPONSE'].includes(error?.code)
+      return ['NETWORK_ERROR', 'RESPONSE_LOST', 'INVALID_JSON', 'UNRECOGNIZED_RESPONSE', 'API_REDIRECT'].includes(error?.code)
         || Number(error?.status) >= 500
         || !(error instanceof Core.ToolboxError);
     }
@@ -2023,6 +2287,16 @@
     @media (prefers-reduced-motion: reduce) {
       * { animation: none !important; scroll-behavior: auto !important; transition: none !important; }
     }
+    [hidden] { display: none !important; }
+    .oauth-redirect { overflow-wrap: anywhere; }
+    .preview-navigation { justify-content: space-between; align-items: center; }
+    .preview-navigation .status-line { flex: 1; text-align: center; }
+    .connection { margin-top: 12px; }
+    .connection .field { margin-top: 12px; }
+    .item .actions { justify-content: space-between; align-items: center; margin-top: 8px; }
+    .item a { color: var(--rt-accent); font-size: 12px; }
+    .item-text { margin: 8px 0; }
+    .item-text div { white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 0; }
   `;
 })();
 
@@ -2061,7 +2335,7 @@
       <header class="header">
         <div class="brand">
           <strong>Reddit Toolbox</strong>
-          <span>Automated history cleanup · RC2</span>
+          <span>Automated history cleanup · RC3</span>
         </div>
         <button class="icon-button close" type="button" aria-label="Close">✕</button>
       </header>
@@ -2071,7 +2345,21 @@
           <div class="notice">
             One confirmation starts the entire selected batch. No per-item clicks are required. Keep this tab open; the batch continues while this panel is closed.
           </div>
-          <div class="status-line">Live connection is pending Reddit API approval and OAuth setup. Local archive import is available.</div>
+          <details class="connection" open>
+            <summary class="connection-summary">Connect Reddit</summary>
+            <p class="status-line">Use the public client ID of your approved Reddit installed app. Authorization opens on Reddit; your password stays there.</p>
+            <div class="field">
+              <label for="oauth-client">Public client ID</label>
+              <input id="oauth-client" type="text" autocomplete="off" spellcheck="false" placeholder="Installed app client ID">
+            </div>
+            <p class="status-line">Registered redirect: <code class="oauth-redirect">https://www.reddit.com/?reddit-toolbox=oauth-callback</code></p>
+            <div class="actions">
+              <button class="button primary connect" type="button">Connect Reddit</button>
+              <button class="button disconnect" type="button" disabled>Disconnect</button>
+              <a class="button canonical-link" href="https://www.reddit.com/" target="_blank" rel="noopener noreferrer">Open www.reddit.com</a>
+            </div>
+            <div class="status-line connection-status" role="status">Disconnected · connection lasts for this tab. Archive files stay local.</div>
+          </details>
         </section>
 
         <section class="section scope-section">
@@ -2174,6 +2462,11 @@
             <div class="metric"><strong class="post-count">0</strong><span>Posts</span></div>
           </div>
           <div class="preview"><div class="preview-empty">Scan or import data, then prepare a batch.</div></div>
+          <div class="actions preview-navigation" hidden>
+            <button class="button preview-previous" type="button">Previous 100</button>
+            <span class="preview-page status-line" role="status"></span>
+            <button class="button preview-next" type="button">Next 100</button>
+          </div>
           <div class="actions">
             <button class="button export-backup" type="button" disabled>Export selected content</button>
             <button class="button export-log" type="button" disabled>Export run log</button>
@@ -2257,6 +2550,8 @@
       this.username = '';
       this.logLines = [];
       this.busy = false;
+      this.connecting = false;
+      this.previewPage = 0;
       this.completionResetTimer = null;
       this.beforeUnloadHandler = (event) => {
         const state = this.runner?.state;
@@ -2282,6 +2577,8 @@
       document.body.append(this.host);
       this.captureRefs();
       this.writeSettingsToForm();
+      this.refs.oauthClient.value = String(this.store.get('oauth-client-id', '') || '');
+      this.refs.canonicalLink.hidden = globalThis.location?.origin === 'https://www.reddit.com';
       this.bindEvents();
       this.updateDateFields();
       this.refreshControls();
@@ -2295,6 +2592,9 @@
       this.refs = {
         launcher: $('.launcher'), launcherLabel: $('.launcher-label'), launcherBadge: $('.launcher-badge'),
         panel: $('.panel'), close: $('.close'),
+        connection: $('.connection'), connectionSummary: $('.connection-summary'), oauthClient: $('#oauth-client'), connect: $('.connect'),
+        disconnect: $('.disconnect'), connectionStatus: $('.connection-status'), canonicalLink: $('.canonical-link'),
+        previewNavigation: $('.preview-navigation'), previewPrevious: $('.preview-previous'), previewNext: $('.preview-next'), previewPage: $('.preview-page'),
         includeComments: $('#include-comments'), includePosts: $('#include-posts'),
         dateMode: $('#date-mode'), fromDate: $('#from-date'), throughDate: $('#through-date'),
         fromField: $('.from-field'), throughField: $('.through-field'), maxItems: $('#max-items'),
@@ -2320,6 +2620,10 @@
     bindEvents() {
       this.refs.launcher.addEventListener('click', () => this.toggle());
       this.refs.close.addEventListener('click', () => this.close());
+      this.refs.connect.addEventListener('click', () => this.connectAccount());
+      this.refs.disconnect.addEventListener('click', () => this.disconnectAccount());
+      this.refs.previewPrevious.addEventListener('click', () => this.renderPreviewPage(this.previewPage - 1));
+      this.refs.previewNext.addEventListener('click', () => this.renderPreviewPage(this.previewPage + 1));
       this.shadow.addEventListener('keydown', (event) => {
         if (event.key === 'Escape' && this.refs.panel.classList.contains('open')) this.close();
       });
@@ -2337,7 +2641,7 @@
       this.refs.retry.addEventListener('click', () => this.prepareRetryBatch());
 
       for (const input of this.shadow.querySelectorAll('input, select')) {
-        if (input === this.refs.archiveInput || input === this.refs.confirmationInput) continue;
+        if (input === this.refs.archiveInput || input === this.refs.confirmationInput || input === this.refs.oauthClient) continue;
         const changed = () => {
           if (this.busy) return;
           this.settings = this.readSettingsFromForm();
@@ -2421,8 +2725,54 @@
     }
 
     ensureClient() {
-      if (this.client) return this.client;
-      throw new Core.AuthError('Reddit API approval and an approved OAuth connection are required before live scanning or cleanup.', { code: 'API_APPROVAL_REQUIRED' });
+      if (!this.client) this.client = new Reddit.RedditOAuthClient();
+      return this.client;
+    }
+
+    async connectAccount() {
+      if (this.connecting || (this.busy && this.runner?.state !== 'paused')) return;
+      this.connecting = true;
+      this.refreshControls();
+      this.setStatus(this.refs.connectionStatus, 'Authorize Reddit Toolbox in the Reddit popup…');
+      try {
+        const client = this.ensureClient();
+        const session = await client.connect(this.refs.oauthClient.value);
+        if (this.runner?.state === 'paused' && !Reddit.sameUsername(session.username, this.plan?.options.accountId)) {
+          throw new Core.PauseRequiredError('Connect the account bound to the paused batch before resuming.', { code: 'ACCOUNT_CHANGED' });
+        }
+        this.store.set('oauth-client-id', this.refs.oauthClient.value.trim());
+        if (this.runner?.state !== 'paused') {
+          if (this.username && !Reddit.sameUsername(this.username, session.username)) {
+            this.profileItems = [];
+            this.archiveItems = [];
+            this.coverage = null;
+          }
+          this.invalidatePlan();
+        }
+        this.username = session.username;
+        this.setStatus(this.refs.connectionStatus, `Connected as u/${session.username} · ready to scan and review.`, 'success');
+        this.refs.connectionSummary.textContent = `u/${session.username} · Connected`;
+        this.refs.connection.open = false;
+      } catch (error) {
+        this.setStatus(this.refs.connectionStatus, UI.compactError(error), 'error');
+      } finally {
+        this.connecting = false;
+        this.refreshControls();
+      }
+    }
+
+    disconnectAccount() {
+      if (this.busy || this.connecting) return;
+      this.client?.disconnect?.();
+      this.username = '';
+      this.profileItems = [];
+      this.archiveItems = [];
+      this.coverage = null;
+      this.invalidatePlan();
+      this.renderCounts();
+      this.refs.connection.open = true;
+      this.refs.connectionSummary.textContent = 'Connect Reddit';
+      this.setStatus(this.refs.connectionStatus, 'Disconnected. In-memory history cleared. Authorization can also be revoked in Reddit preferences.');
     }
 
     setStatus(element, message, tone = '') {
@@ -2523,7 +2873,9 @@
         this.store.set('settings', this.settings);
         const allItems = this.allItems();
         if (!allItems.length) throw new Error('Scan your profile or import Reddit archive CSV files first.');
-        const session = await this.ensureClient().getSession();
+        const client = this.ensureClient();
+        const localReview = client instanceof Reddit.RedditOAuthClient && !client.connected && !this.profileItems.length;
+        const session = localReview ? { username: '' } : await client.getSession();
         this.username = session.username;
         const selection = Core.selectItems(allItems, {
           ...this.settings,
@@ -2535,7 +2887,7 @@
         this.renderPlan();
         this.setStatus(
           this.refs.scanStatus,
-          `${selection.selected.length} queued for one automated batch; ${Object.values(selection.skipped).reduce((sum, count) => sum + count, 0)} excluded by filters.`,
+          `${selection.selected.length} selected${this.username ? ' for one automated batch' : ' for local review; connect Reddit and prepare again to enable cleanup'}; ${Object.values(selection.skipped).reduce((sum, count) => sum + count, 0)} excluded by filters.`,
           'success'
         );
       } catch (error) {
@@ -2548,6 +2900,7 @@
 
     invalidatePlan(message = '') {
       this.plan = null;
+      this.refs.previewNavigation.hidden = true;
       this.refs.confirmationInput.value = '';
       this.refs.confirmationPhrase.textContent = 'DELETE 0 ITEMS';
       this.refs.selectedCount.textContent = '0';
@@ -2595,8 +2948,8 @@
       const preserved = [filters.keepSubreddits.length ? `keep ${filters.keepSubreddits.map((name) => `r/${name}`).join(', ')}` : '',
         filters.keepScoreAtOrAbove !== null ? `keep score ≥ ${filters.keepScoreAtOrAbove}` : '',
         filters.textIncludes ? 'text filter active' : ''].filter(Boolean).join('; ');
-      this.refs.previewCaption.textContent = `u/${this.plan.options.accountId} · ${source}${incomplete ? ' (listing limited)' : ''}. ${editable} overwrite then delete; ${uneditable} ${this.plan.options.deleteUneditablePosts ? 'direct delete' : 'will skip'}. ${span}; ${filters.sortOrder} first. ${preserved}. Lifetime completeness is not established.`;
-      this.refs.confirmationPhrase.textContent = this.plan.confirmation;
+      this.refs.previewCaption.textContent = `${this.plan.options.accountId ? `u/${this.plan.options.accountId}` : 'Local review · no account connected'} · ${source}${incomplete ? ' (listing limited)' : ''}. ${editable} overwrite then delete; ${uneditable} ${this.plan.options.deleteUneditablePosts ? 'direct delete' : 'will skip'}. ${span}; ${filters.sortOrder} first. ${preserved ? `${preserved}. ` : ''}Lifetime completeness is not established.`;
+      this.refs.confirmationPhrase.textContent = this.plan.options.accountId ? this.plan.confirmation : 'Connect Reddit, then prepare again';
       this.refs.preview.replaceChildren();
       this.refs.processedCount.textContent = '0';
       this.refs.remainingCount.textContent = String(contents.length);
@@ -2610,13 +2963,36 @@
         ? `Ready · one confirmation will process all ${contents.length} selected items.`
         : 'No matching items.');
 
+      this.previewPage = 0;
+      this.renderPreviewPage(0);
+      this.refs.progress.max = Math.max(1, contents.length);
+      this.refs.progress.value = 0;
+      this.refs.exportBackup.disabled = contents.length === 0;
+      this.refs.retry.disabled = true;
+      this.setLauncherState('idle');
+      this.refreshControls();
+    }
+    excludeFromPlan(id) {
+      if (!this.plan || this.busy || this.connecting || this.plan.startedAt) return;
+      const page = this.previewPage;
+      this.plan = Core.createPlan(this.plan.items.filter((item) => item.id !== id).map((item) => item.content), this.plan.options);
+      this.refs.confirmationInput.value = '';
+      this.renderPlan();
+      this.renderPreviewPage(page);
+      this.setStatus(this.refs.runStatus, 'Item kept. Review the remaining batch and enter its updated confirmation.');
+    }
+
+    renderPreviewPage(page = 0) {
+      const contents = this.plan?.items || [];
+      this.previewPage = Math.min(Math.max(0, page), Math.max(0, Math.ceil(contents.length / 100) - 1));
+      this.refs.preview.replaceChildren();
       if (!contents.length) {
         this.refs.preview.append(Object.assign(document.createElement('div'), {
           className: 'preview-empty',
           textContent: 'No items match the current filters.'
         }));
       } else {
-        for (const queueItem of this.plan.items.slice(0, 100)) {
+        for (const queueItem of this.plan.items.slice(this.previewPage * 100, (this.previewPage + 1) * 100)) {
           const item = queueItem.content;
           const row = document.createElement('div');
           row.className = 'item';
@@ -2638,28 +3014,55 @@
           const snippet = document.createElement('div');
           snippet.className = 'snippet';
           snippet.textContent = item.title || item.text || item.permalink || item.fullname;
+          const fullText = document.createElement('details');
+          fullText.className = 'item-text';
+          const textSummary = document.createElement('summary');
+          textSummary.textContent = 'Read full text';
+          const textBody = document.createElement('div');
+          textBody.textContent = [item.title, item.text].filter(Boolean).join('\n\n') || 'No editable text in this record.';
+          fullText.append(textSummary, textBody);
           const status = document.createElement('div');
           status.className = `item-status ${queueItem.status}`;
           status.textContent = item.kind === 'post' && !item.editable
             ? (this.plan.options.deleteUneditablePosts ? 'Queued · direct delete (explicitly enabled)' : 'Will skip · direct deletion is disabled')
             : 'Queued · automatic overwrite, verification, and deletion';
-          row.append(head, snippet, status);
+          const actions = document.createElement('div');
+          actions.className = 'actions';
+          if (item.permalink) {
+            try {
+              const url = new URL(item.permalink, 'https://www.reddit.com');
+              if (url.protocol === 'https:' && ['www.reddit.com', 'old.reddit.com', 'new.reddit.com', 'sh.reddit.com'].includes(url.hostname) && !url.username && !url.password) {
+                const link = document.createElement('a');
+                link.href = url.href;
+                link.textContent = 'Open on Reddit';
+                link.target = '_blank';
+                link.rel = 'noopener noreferrer';
+                actions.append(link);
+              }
+            } catch { /* An archive link is optional and never executed. */ }
+          }
+          const keep = document.createElement('button');
+          keep.className = 'button keep-item';
+          keep.type = 'button';
+          keep.textContent = 'Keep this item';
+          keep.disabled = Boolean(this.busy || this.connecting || this.plan.startedAt);
+          keep.addEventListener('click', () => this.excludeFromPlan(queueItem.id));
+          actions.append(keep);
+          row.append(head, snippet, fullText, status, actions);
           this.refs.preview.append(row);
         }
-        if (contents.length > 100) {
-          this.refs.preview.append(Object.assign(document.createElement('div'), {
-            className: 'preview-empty',
-            textContent: `${contents.length - 100} more items are included in this batch.`
-          }));
-        }
       }
-      this.refs.progress.max = Math.max(1, contents.length);
-      this.refs.progress.value = 0;
-      this.refs.exportBackup.disabled = contents.length === 0;
-      this.refs.retry.disabled = true;
-      this.setLauncherState('idle');
-      this.refreshControls();
+
+      this.refs.previewNavigation.hidden = contents.length <= 100;
+      this.refs.previewPrevious.disabled = this.previewPage === 0;
+      this.refs.previewNext.disabled = (this.previewPage + 1) * 100 >= contents.length;
+      this.refs.previewPage.textContent = contents.length ? 'Items ' + (this.previewPage * 100 + 1) + '–' + Math.min(contents.length, (this.previewPage + 1) * 100) + ' of ' + contents.length : '';
+      this.refs.preview.scrollTop = 0;
+      for (const queueItem of this.plan?.items.slice(this.previewPage * 100, (this.previewPage + 1) * 100) || []) {
+        if (queueItem.status !== 'ready') this.updateQueueRow(queueItem);
+      }
     }
+
   }
 
   for (const name of Object.getOwnPropertyNames(ScopeMethods.prototype)) {
@@ -2708,24 +3111,29 @@
   class RunMethods {
     refreshControls() {
       const active = Boolean(this.runner && ACTIVE_STATES.has(this.runner.state));
-      const locked = Boolean(active || this.busy);
+      const locked = Boolean(active || this.busy || this.connecting);
       const summary = active ? this.runner.progress().summary : Core.planSummary(this.plan);
       const confirmed = Boolean(
-        !locked && this.plan
+        !locked && this.plan?.options.accountId
         && summary.ready > 0
         && Core.isPlanCurrent(this.plan)
         && this.refs.confirmationInput.value.trim() === this.plan.confirmation
       );
       this.refs.start.disabled = locked || !confirmed;
+      this.refs.confirmationInput.disabled = locked || !this.plan?.options.accountId;
       this.refs.pause.disabled = !active || this.runner?.state === 'stopping';
       this.refs.stop.disabled = !active || this.runner?.state === 'stopping';
       this.refs.retry.disabled = locked || !(summary.failed || summary.stopped);
       this.refs.pause.textContent = this.runner?.state === 'paused' ? 'Resume batch' : 'Pause batch';
+      this.refs.connect.disabled = this.connecting || (this.busy && this.runner?.state !== 'paused');
+      this.refs.oauthClient.disabled = this.refs.connect.disabled;
+      this.refs.disconnect.disabled = locked || !this.username;
       this.refs.exportLog.disabled = !this.plan || !this.plan.items.some((item) => item.status !== 'ready');
 
       for (const element of this.shadow.querySelectorAll('.scope-section input, .scope-section select, .scope-section button')) {
         element.disabled = locked;
       }
+      for (const element of this.refs.preview.querySelectorAll('.keep-item')) element.disabled = locked || Boolean(this.plan?.startedAt);
     }
 
     setLauncherState(state = 'idle', summary = null) {
@@ -2899,7 +3307,7 @@
     }
 
     async startRun() {
-      if (this.busy || (this.runner && ACTIVE_STATES.has(this.runner.state))) return;
+      if (this.busy || this.connecting || (this.runner && ACTIVE_STATES.has(this.runner.state))) return;
       if (!this.plan || !Core.isPlanCurrent(this.plan)) {
         this.setStatus(this.refs.runStatus, 'The batch changed. Prepare a new preview.', 'error');
         return;
@@ -2973,7 +3381,7 @@
     }
 
     async togglePause() {
-      if (!this.runner) return;
+      if (!this.runner || this.connecting) return;
       if (this.runner.state === 'paused') {
         this.setStatus(this.refs.runStatus, 'Refreshing the Reddit session before resuming…');
         try {
@@ -3066,6 +3474,7 @@
   'use strict';
 
   const toolbox = globalThis.RedditToolbox;
+  if (toolbox.Reddit.receiveOAuthCallback()) return;
   toolbox.App ||= {};
 
   toolbox.App.start = () => {

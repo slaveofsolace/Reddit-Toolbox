@@ -4,7 +4,7 @@ Reddit Toolbox is the first product built on the extracted Toolbox Family core.
 
 ```text
 src/core/       platform-neutral selection, reviewed plans, automated batches, storage, CSV, and errors
-src/reddit/     Reddit content model, session adapter, scanner, and overwrite/delete workflow
+src/reddit/     Reddit content model, userscript OAuth connection, scanner, and overwrite/delete workflow
 src/ui/         Reddit Toolbox presentation and batch controls
 src/main.js     product bootstrap
 ```
@@ -19,7 +19,7 @@ src/main.js     product bootstrap
 | Select a finite target set | `src/core/filters.js` |
 | Bind review to exact targets and options | `src/core/plan.js` |
 | Execute the complete queue automatically | `src/core/runner.js` |
-| Isolate platform requests | `src/reddit/api.js` |
+| Isolate platform requests | `src/reddit/api.js`, `src/reddit/oauth.js` |
 | Coordinate overwrite and deletion | `src/reddit/removal-service.js` |
 | Persist only safe preferences | `src/core/storage.js` |
 | Present Scope → Review → Confirm once → Automate | `src/ui/*` |
@@ -90,7 +90,7 @@ The removal service retains per-account, per-fullname mutation state for the lif
 
 ## Adapter contract
 
-The provisional Reddit adapter provides the following contract for synthetic testing. The production UI has no default live adapter until API approval and OAuth setup are complete; see [API access](API_ACCESS.md).
+The production UI instantiates the userscript OAuth adapter. It connects only with a registered installed-app public client ID and explicit Reddit authorization; see [API access](API_ACCESS.md). The session adapter supplies the page identity cross-check and remains available to isolated tests. Both expose the same removal-service contract.
 
 ```text
 getSession()                       identify the signed-in account

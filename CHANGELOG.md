@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## 1.0.0-rc.3 — 2026-09-05
+
+Development candidate; authenticated Reddit and Tampermonkey acceptance remain pending.
+
+- Implement userscript-only installed-app OAuth connection, state/source validation, token renewal, current-page identity binding, and disconnect. Tokens remain in memory.
+- Add cookie-free narrowly scoped requests, request pacing, response-budget cooldowns, and an independent timeout watchdog.
+- Make all selected items reviewable through pagination, with per-item exclusion that resets confirmation.
+- Support disconnected local archive review without enabling destructive controls.
+- Preserve archive items with unknown fields when score/subreddit protection is active.
 
 - Bind review to the account as well as exact ordered targets and destructive settings; freeze the selected targets during execution.
 - Pause before the next mutation after settling the active operation, with account, ownership, and replacement checks before deletion.
@@ -9,7 +17,7 @@
 - Parse large archives incrementally, validate their headers and explicit IDs, report rejected/duplicate rows, and keep preview rendering bounded.
 - Collapse Advanced controls, retain launcher completion, correct coverage disclosure, and sanitize exported run logs.
 - Add generated-script and Chromium/Firefox fixture regressions; generate and verify checksums with the deterministic build.
-- Disable the provisional live session adapter by default pending Reddit approval and OAuth setup. No new release or authenticated acceptance is claimed.
+- Keep the provisional session adapter out of the production mutation path. No authenticated acceptance is claimed.
 
 ## 1.0.0-rc.2 — 2026-09-03
 

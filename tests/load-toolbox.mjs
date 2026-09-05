@@ -14,6 +14,7 @@ export function loadToolbox(options = {}) {
     URLSearchParams,
     Blob,
     AbortController,
+    btoa,
     Date,
     Math,
     JSON,

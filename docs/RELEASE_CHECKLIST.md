@@ -1,51 +1,48 @@
-# Release checklist
+# RC3 acceptance checklist
 
-RC2 follow-up, unreleased. Local evidence was refreshed on 2026-09-03.
+Development candidate, 2026-09-05. Source distribution and verified live acceptance are separate.
 
-## Local verification
+## Automated checks
 
-- [x] `npm ci` and `npm run check`: 70 passing tests
-- [x] Deterministic source-order composition, matching package/metadata version, syntax, dynamic-evaluation rejection, and SHA-256 integrity
-- [x] Generated-script automatic two-comment and mixed queues
-- [x] Account-bound review and account changes before the next mutation
-- [x] Ownership and live editability checks; direct-delete opt-in
-- [x] Exact saved replacement before deletion; eventual-consistency read retries
-- [x] Ambiguous edit/delete and lost response-body protection
-- [x] 401/403 attention, 429 Retry-After waits, bounded transient retries/timeouts
-- [x] Pause at mutation boundaries, in-flight settlement, stop, and retry construction
-- [x] Five-consecutive-failure guard and isolated failure continuation
-- [x] No-lock failure, same-origin two-tab exclusion, and canonical-origin mutation restriction
-- [x] No default unapproved live connection; no authority reconstruction after reload
-- [x] Chunked CSV import, strict headers/IDs, deduplication, rejected-row counts, and bounded previews
-- [x] Preferences exclude active authority; exported run logs omit content/account identifiers
+- [x] 80 passing Node tests, including generated-userscript execution
+- [x] Deterministic source composition, metadata/package/lockfile/runtime versions, syntax, no dynamic evaluation, SHA-256
+- [x] One-confirmation automatic two-comment and mixed queues
+- [x] Account-bound frozen targets; ownership/editability checks; direct-delete opt-in
+- [x] Exact replacement verification and eventual-consistency retries
+- [x] No blind resend after ambiguous edit/delete/redirect results
+- [x] Pause/stop/retry, account changes, 401/403, rate-limit waits, failure guard
+- [x] Web Locks required and canonical origin enforced; no reload authority reconstruction
+- [x] Strict CSV IDs/headers, rejected/duplicate counts, yielding imports
+- [x] Score/subreddit protection retains unknown archive values
+- [x] OAuth scopes, exact endpoints, state/source/origin validation, renewal, account comparison, disconnect
+- [x] Anonymous GM transport, rejected redirects, serialized pacing, rate-limit budgets, independent timeout watchdog
+- [x] Tokens excluded from serialization; preference and run-log boundaries
 
-## Rendered fixture acceptance
+## Rendered browser fixtures
 
-The generated script ran in isolated Playwright profiles. Every network request was intercepted with synthetic data. This table does not claim Tampermonkey or authenticated Reddit acceptance.
+The generated script runs in isolated Playwright browsers with all traffic intercepted. The default OAuth client is used, including a synthetic consent popup, callback, and code exchange. GM network APIs are simulated; Tampermonkey is not installed in these profiles. The Browser plugin is not available, so the frontend testing skill's Playwright path is used. These are synthetic fixture pages on the exact www.reddit.com origin.
 
-| Check | Chromium 151.0.7922.34 | Firefox 153.0 |
+| Flow | Chromium 151 | Firefox 153 |
 | --- | --- | --- |
-| One confirmation, automatic two-comment and mixed batch | Pass | Pass |
-| Closed-panel run and persistent completion launcher | Pass | Pass |
-| Second tab refused without mutations | Pass | Pass |
-| Navigation warning, settings lock, no reload resume | Pass | Pass |
-| Keyboard close/focus; light/dark; 390px and 320px layouts | Pass | Pass |
-| 50,000-row archive; 100 rendered rows; UI timer advances | Pass | Pass |
-| Relevant console errors | None | None |
+| Default connection → scan → review → confirm → automatic two-comment/mixed run | Pass | Pass |
+| Second tab blocked; panel closed completion; navigation warning; settings lock | Pass | Pass |
+| Reload clears connection and run authority; disconnect clears loaded history | Pass | Pass |
+| 50,000 archive rows; responsive import; 100 visible rows per page | Pass | Pass |
+| Paginated review; per-item exclusion resets confirmation | Pass | Pass |
+| Local disconnected archive review; Run locked; full text expansion | Pass | Pass |
+| Light 1440px; dark 390px; 320px containment; keyboard close/focus | Pass | Pass |
+| Page identity, meaningful content, runtime overlay/console errors | Pass, none | Pass, none |
 
-## External gates still required
+## Live acceptance still required
 
-- [ ] Explicit Reddit API approval for this use case
-- [ ] Registered public OAuth client and approved redirect/flow
-- [ ] OAuth consent/state/expiry/revocation and current-tab account binding accepted
-- [ ] Authenticated identity and listing response shapes accepted
-- [ ] Actual behavior on `www`, `old`, `new`, and `sh` surfaces documented; only the canonical origin may mutate
-- [ ] One exact owner-approved disposable two-comment batch automatically overwrites and deletes both
-- [ ] Approved two-self-post, mixed, and explicitly direct-deleted disposable cases
-- [ ] Live ownership, account-change, ambiguous response, pause/stop, and retry acceptance
-- [ ] Tampermonkey fresh install in Chromium and Firefox
-- [ ] Tampermonkey update-in-place from RC1 and RC2 to the next released version
-- [ ] Exact-head CI passes on the merge/release head
-- [ ] Published userscript/checksum and install/update URLs verified for that release
+- [ ] Explicit Reddit API approval for this own-account cleanup use case
+- [ ] Registered installed-app client ID and accepted exact callback redirect
+- [ ] Real Reddit consent, renewal/revocation, signed-in identity and listing response shapes
+- [ ] Script-driven automatic two-comment and self-post cleanup on exact owner-selected content
+- [ ] Live mixed/direct-delete cases and verification of actual deletion read-back semantics
+- [ ] Live account-change, ownership, uncertain-result, pause/stop and retry behavior
+- [ ] Tampermonkey fresh installation in Chromium and Firefox
+- [ ] Actual update-in-place from RC1 and RC2, including new network grants
+- [ ] Main commit CI and served userscript/checksum verified after merge
 
-No new tag or release is justified until these gates are resolved. Local mocks do not prove platform approval, authentication, actual Reddit mutation semantics, or extension sandbox behavior.
+No authenticated account test or deletion has been performed. The owner authorized their own content tests, but an approved client connection has not been supplied. Browser Use also previously rejected the Chrome extension-manager route and prohibited workarounds; that route was not retried. The code is a development candidate, without a stable-release or perfected-live-behavior claim.

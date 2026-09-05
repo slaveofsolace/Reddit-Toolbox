@@ -21,6 +21,8 @@
       this.username = '';
       this.logLines = [];
       this.busy = false;
+      this.connecting = false;
+      this.previewPage = 0;
       this.completionResetTimer = null;
       this.beforeUnloadHandler = (event) => {
         const state = this.runner?.state;
@@ -46,6 +48,8 @@
       document.body.append(this.host);
       this.captureRefs();
       this.writeSettingsToForm();
+      this.refs.oauthClient.value = String(this.store.get('oauth-client-id', '') || '');
+      this.refs.canonicalLink.hidden = globalThis.location?.origin === 'https://www.reddit.com';
       this.bindEvents();
       this.updateDateFields();
       this.refreshControls();
@@ -59,6 +63,9 @@
       this.refs = {
         launcher: $('.launcher'), launcherLabel: $('.launcher-label'), launcherBadge: $('.launcher-badge'),
         panel: $('.panel'), close: $('.close'),
+        connection: $('.connection'), connectionSummary: $('.connection-summary'), oauthClient: $('#oauth-client'), connect: $('.connect'),
+        disconnect: $('.disconnect'), connectionStatus: $('.connection-status'), canonicalLink: $('.canonical-link'),
+        previewNavigation: $('.preview-navigation'), previewPrevious: $('.preview-previous'), previewNext: $('.preview-next'), previewPage: $('.preview-page'),
         includeComments: $('#include-comments'), includePosts: $('#include-posts'),
         dateMode: $('#date-mode'), fromDate: $('#from-date'), throughDate: $('#through-date'),
         fromField: $('.from-field'), throughField: $('.through-field'), maxItems: $('#max-items'),
@@ -84,6 +91,10 @@
     bindEvents() {
       this.refs.launcher.addEventListener('click', () => this.toggle());
       this.refs.close.addEventListener('click', () => this.close());
+      this.refs.connect.addEventListener('click', () => this.connectAccount());
+      this.refs.disconnect.addEventListener('click', () => this.disconnectAccount());
+      this.refs.previewPrevious.addEventListener('click', () => this.renderPreviewPage(this.previewPage - 1));
+      this.refs.previewNext.addEventListener('click', () => this.renderPreviewPage(this.previewPage + 1));
       this.shadow.addEventListener('keydown', (event) => {
         if (event.key === 'Escape' && this.refs.panel.classList.contains('open')) this.close();
       });
@@ -101,7 +112,7 @@
       this.refs.retry.addEventListener('click', () => this.prepareRetryBatch());
 
       for (const input of this.shadow.querySelectorAll('input, select')) {
-        if (input === this.refs.archiveInput || input === this.refs.confirmationInput) continue;
+        if (input === this.refs.archiveInput || input === this.refs.confirmationInput || input === this.refs.oauthClient) continue;
         const changed = () => {
           if (this.busy) return;
           this.settings = this.readSettingsFromForm();
@@ -185,8 +196,54 @@
     }
 
     ensureClient() {
-      if (this.client) return this.client;
-      throw new Core.AuthError('Reddit API approval and an approved OAuth connection are required before live scanning or cleanup.', { code: 'API_APPROVAL_REQUIRED' });
+      if (!this.client) this.client = new Reddit.RedditOAuthClient();
+      return this.client;
+    }
+
+    async connectAccount() {
+      if (this.connecting || (this.busy && this.runner?.state !== 'paused')) return;
+      this.connecting = true;
+      this.refreshControls();
+      this.setStatus(this.refs.connectionStatus, 'Authorize Reddit Toolbox in the Reddit popup…');
+      try {
+        const client = this.ensureClient();
+        const session = await client.connect(this.refs.oauthClient.value);
+        if (this.runner?.state === 'paused' && !Reddit.sameUsername(session.username, this.plan?.options.accountId)) {
+          throw new Core.PauseRequiredError('Connect the account bound to the paused batch before resuming.', { code: 'ACCOUNT_CHANGED' });
+        }
+        this.store.set('oauth-client-id', this.refs.oauthClient.value.trim());
+        if (this.runner?.state !== 'paused') {
+          if (this.username && !Reddit.sameUsername(this.username, session.username)) {
+            this.profileItems = [];
+            this.archiveItems = [];
+            this.coverage = null;
+          }
+          this.invalidatePlan();
+        }
+        this.username = session.username;
+        this.setStatus(this.refs.connectionStatus, `Connected as u/${session.username} · ready to scan and review.`, 'success');
+        this.refs.connectionSummary.textContent = `u/${session.username} · Connected`;
+        this.refs.connection.open = false;
+      } catch (error) {
+        this.setStatus(this.refs.connectionStatus, UI.compactError(error), 'error');
+      } finally {
+        this.connecting = false;
+        this.refreshControls();
+      }
+    }
+
+    disconnectAccount() {
+      if (this.busy || this.connecting) return;
+      this.client?.disconnect?.();
+      this.username = '';
+      this.profileItems = [];
+      this.archiveItems = [];
+      this.coverage = null;
+      this.invalidatePlan();
+      this.renderCounts();
+      this.refs.connection.open = true;
+      this.refs.connectionSummary.textContent = 'Connect Reddit';
+      this.setStatus(this.refs.connectionStatus, 'Disconnected. In-memory history cleared. Authorization can also be revoked in Reddit preferences.');
     }
 
     setStatus(element, message, tone = '') {

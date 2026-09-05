@@ -32,7 +32,7 @@
       <header class="header">
         <div class="brand">
           <strong>Reddit Toolbox</strong>
-          <span>Automated history cleanup · RC2</span>
+          <span>Automated history cleanup · RC3</span>
         </div>
         <button class="icon-button close" type="button" aria-label="Close">✕</button>
       </header>
@@ -42,7 +42,21 @@
           <div class="notice">
             One confirmation starts the entire selected batch. No per-item clicks are required. Keep this tab open; the batch continues while this panel is closed.
           </div>
-          <div class="status-line">Live connection is pending Reddit API approval and OAuth setup. Local archive import is available.</div>
+          <details class="connection" open>
+            <summary class="connection-summary">Connect Reddit</summary>
+            <p class="status-line">Use the public client ID of your approved Reddit installed app. Authorization opens on Reddit; your password stays there.</p>
+            <div class="field">
+              <label for="oauth-client">Public client ID</label>
+              <input id="oauth-client" type="text" autocomplete="off" spellcheck="false" placeholder="Installed app client ID">
+            </div>
+            <p class="status-line">Registered redirect: <code class="oauth-redirect">https://www.reddit.com/?reddit-toolbox=oauth-callback</code></p>
+            <div class="actions">
+              <button class="button primary connect" type="button">Connect Reddit</button>
+              <button class="button disconnect" type="button" disabled>Disconnect</button>
+              <a class="button canonical-link" href="https://www.reddit.com/" target="_blank" rel="noopener noreferrer">Open www.reddit.com</a>
+            </div>
+            <div class="status-line connection-status" role="status">Disconnected · connection lasts for this tab. Archive files stay local.</div>
+          </details>
         </section>
 
         <section class="section scope-section">
@@ -145,6 +159,11 @@
             <div class="metric"><strong class="post-count">0</strong><span>Posts</span></div>
           </div>
           <div class="preview"><div class="preview-empty">Scan or import data, then prepare a batch.</div></div>
+          <div class="actions preview-navigation" hidden>
+            <button class="button preview-previous" type="button">Previous 100</button>
+            <span class="preview-page status-line" role="status"></span>
+            <button class="button preview-next" type="button">Next 100</button>
+          </div>
           <div class="actions">
             <button class="button export-backup" type="button" disabled>Export selected content</button>
             <button class="button export-log" type="button" disabled>Export run log</button>

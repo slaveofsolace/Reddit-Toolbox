@@ -33,24 +33,29 @@
   class RunMethods {
     refreshControls() {
       const active = Boolean(this.runner && ACTIVE_STATES.has(this.runner.state));
-      const locked = Boolean(active || this.busy);
+      const locked = Boolean(active || this.busy || this.connecting);
       const summary = active ? this.runner.progress().summary : Core.planSummary(this.plan);
       const confirmed = Boolean(
-        !locked && this.plan
+        !locked && this.plan?.options.accountId
         && summary.ready > 0
         && Core.isPlanCurrent(this.plan)
         && this.refs.confirmationInput.value.trim() === this.plan.confirmation
       );
       this.refs.start.disabled = locked || !confirmed;
+      this.refs.confirmationInput.disabled = locked || !this.plan?.options.accountId;
       this.refs.pause.disabled = !active || this.runner?.state === 'stopping';
       this.refs.stop.disabled = !active || this.runner?.state === 'stopping';
       this.refs.retry.disabled = locked || !(summary.failed || summary.stopped);
       this.refs.pause.textContent = this.runner?.state === 'paused' ? 'Resume batch' : 'Pause batch';
+      this.refs.connect.disabled = this.connecting || (this.busy && this.runner?.state !== 'paused');
+      this.refs.oauthClient.disabled = this.refs.connect.disabled;
+      this.refs.disconnect.disabled = locked || !this.username;
       this.refs.exportLog.disabled = !this.plan || !this.plan.items.some((item) => item.status !== 'ready');
 
       for (const element of this.shadow.querySelectorAll('.scope-section input, .scope-section select, .scope-section button')) {
         element.disabled = locked;
       }
+      for (const element of this.refs.preview.querySelectorAll('.keep-item')) element.disabled = locked || Boolean(this.plan?.startedAt);
     }
 
     setLauncherState(state = 'idle', summary = null) {
@@ -224,7 +229,7 @@
     }
 
     async startRun() {
-      if (this.busy || (this.runner && ACTIVE_STATES.has(this.runner.state))) return;
+      if (this.busy || this.connecting || (this.runner && ACTIVE_STATES.has(this.runner.state))) return;
       if (!this.plan || !Core.isPlanCurrent(this.plan)) {
         this.setStatus(this.refs.runStatus, 'The batch changed. Prepare a new preview.', 'error');
         return;
@@ -298,7 +303,7 @@
     }
 
     async togglePause() {
-      if (!this.runner) return;
+      if (!this.runner || this.connecting) return;
       if (this.runner.state === 'paused') {
         this.setStatus(this.refs.runStatus, 'Refreshing the Reddit session before resuming…');
         try {

@@ -101,7 +101,7 @@
     }
 
     isAmbiguousMutationError(error) {
-      return ['NETWORK_ERROR', 'RESPONSE_LOST', 'INVALID_JSON', 'UNRECOGNIZED_RESPONSE'].includes(error?.code)
+      return ['NETWORK_ERROR', 'RESPONSE_LOST', 'INVALID_JSON', 'UNRECOGNIZED_RESPONSE', 'API_REDIRECT'].includes(error?.code)
         || Number(error?.status) >= 500
         || !(error instanceof Core.ToolboxError);
     }

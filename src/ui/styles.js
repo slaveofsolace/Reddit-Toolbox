@@ -275,5 +275,15 @@
     @media (prefers-reduced-motion: reduce) {
       * { animation: none !important; scroll-behavior: auto !important; transition: none !important; }
     }
+    [hidden] { display: none !important; }
+    .oauth-redirect { overflow-wrap: anywhere; }
+    .preview-navigation { justify-content: space-between; align-items: center; }
+    .preview-navigation .status-line { flex: 1; text-align: center; }
+    .connection { margin-top: 12px; }
+    .connection .field { margin-top: 12px; }
+    .item .actions { justify-content: space-between; align-items: center; margin-top: 8px; }
+    .item a { color: var(--rt-accent); font-size: 12px; }
+    .item-text { margin: 8px 0; }
+    .item-text div { white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 0; }
   `;
 })();

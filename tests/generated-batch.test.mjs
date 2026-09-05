@@ -228,8 +228,11 @@ test('requests have a bounded timeout and reject noncanonical destructive origin
   }
 });
 
-test('the production UI cannot use the unapproved session adapter by default', () => {
-  const { UI } = load();
+test('the production UI uses OAuth and sends no live request before connection', async () => {
+  let calls = 0;
+  const { UI, Reddit } = load({ fetch: async () => { calls += 1; throw new Error('No live traffic'); } });
   const app = new UI.RedditToolboxApp({ store: { get: (_name, fallback) => fallback } });
-  assert.throws(() => app.ensureClient(), { code: 'API_APPROVAL_REQUIRED' });
+  assert.ok(app.ensureClient() instanceof Reddit.RedditOAuthClient);
+  await assert.rejects(app.ensureClient().getSession(), { code: 'OAUTH_NOT_CONNECTED' });
+  assert.equal(calls, 0);
 });

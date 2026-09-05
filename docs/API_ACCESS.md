@@ -1,23 +1,34 @@
-# Reddit API access
+# Userscript connection
 
-Checked against primary sources on 2026-09-03.
+The product is one Tampermonkey script. RC3 includes a public installed-app OAuth connection in the script; no hosted callback, companion server, password, or client secret is used.
 
-- Reddit's [Responsible Builder Policy](https://support.reddithelp.com/hc/en-us/articles/42728983564564-Responsible-Builder-Policy), updated June 5, 2026, requires explicit approval before API data access. It directs developers whose use case is unsupported by Devvit to the linked support process.
-- The [Data API Wiki](https://support.reddithelp.com/hc/en-us/articles/16160319875092-Reddit-Data-API-Wiki), updated May 11, 2026, requires registered OAuth authentication. It warns that legacy technical documentation may be outdated.
-- The [Data API Terms](https://redditinc.com/policies/data-api-terms) require the access information supplied by Reddit and prohibit masking OAuth identity or access methods.
+## Setup
 
-The session/modhash adapter is not an accepted production connection. The application does not instantiate it by default. Synthetic tests inject it explicitly with intercepted responses; no Reddit data or credentials are used in that acceptance.
+1. Obtain Reddit API approval for the own-account cleanup use case and an **installed app** public client ID. A confidential script/web app is not interchangeable.
+2. Register this exact redirect for that app:
 
-## Required before connection work can be accepted
+   https://www.reddit.com/?reddit-toolbox=oauth-callback
 
-The maintainer must supply the approval status for this specific personal-cleanup use case, the registered public/installed client ID, and its redirect URI. None is currently configured. A client secret, password, cookie, or pasted access token must not be supplied.
+3. On **www.reddit.com**, open RT → **Connect Reddit**, enter the public client ID, and connect.
+4. Review Reddit's consent screen. Return to the original tab after authorization and check the connected username.
+5. Scan or import, prepare a fresh batch, and review its account and targets before confirming.
 
-Implement the approved flow behind the existing adapter contract. Keep credentials out of ordinary preferences and logs, validate state, request only the necessary identity/history/read/edit scopes, handle expiry and revocation, and bind the connected account to review. Reconnection must not silently resume a batch. The connected OAuth identity must also be checked against the current tab account before a new mutation.
+Approval of this use case and redirect has not been established for this project. The documented installed-app code flow is implemented and fixture-tested; current Reddit acceptance of the registered app/redirect must be verified with the actual app. A working local fixture is not platform approval.
 
-Reddit's [legacy OAuth documentation](https://github.com/reddit-archive/reddit/wiki/OAuth2) describes installed clients without a secret. It does not establish current PKCE support or approval of a userscript redirect. Confirm those details for the registered app before selecting and accepting a flow; do not invent support or substitute a private client.
+## Implementation
 
-## Disposable acceptance
+The authorization code flow requests only identity, history, read, and edit scopes. A cryptographically random state, exact Reddit origin, and exact popup source are checked. The callback immediately removes code/state from its URL. The original tab exchanges the one-use code directly with Reddit using the public client ID and an empty installed-app secret.
 
-After API approval and the adapter are ready, obtain one exact owner-approved disposable batch: account, fullnames, content types, and direct-delete permission. Begin with two comments and observe automatic advancement after one batch confirmation. Creating test content also requires approval of the text and location. Account-history deletion is not authorized by implementation work.
+Access/refresh tokens live in private in-memory fields. API calls use cookie-free Tampermonkey requests to oauth.reddit.com. A separate same-origin identity read checks the current Reddit page account against the OAuth account; reviewed account changes pause mutations. Token renewal happens before expiry. Reconnecting does not press Resume or start another batch.
 
-Current acceptance uses only synthetic fixtures. No live account scan, edit, delete, content creation, OAuth consent, or platform approval is claimed. Do not publish another release or enable live access until the remaining checklist is satisfied.
+Disconnect clears tokens and loaded history. It does not revoke Reddit's grant; revoke that separately in Reddit's authorized-app preferences if desired. Reload clears the connection and all destructive run authority. The public client ID is the only saved connection value.
+
+The legacy session/modhash adapter remains a fixture adapter and supplies the same-origin identity read. It is never the production mutation fallback. Invalid destinations, operations, redirects, missing scopes, unavailable userscript permissions, and expired/revoked authorization produce actionable errors.
+
+## Primary sources checked 2026-09-05
+
+- [Responsible Builder Policy](https://support.reddithelp.com/hc/en-us/articles/42728983564564-Responsible-Builder-Policy): explicit API approval and respect for access limits.
+- [Reddit OAuth documentation](https://github.com/reddit-archive/reddit/wiki/OAuth2): installed clients without a secret, authorization code exchange, refresh, state, and scopes. This is legacy documentation; no PKCE support is asserted.
+- [Tampermonkey documentation](https://www.tampermonkey.net/documentation.php): narrow connection grants and userscript requests.
+
+Live account verification and deletion acceptance remain pending. The owner has authorized testing their own content; choose an exact small batch when a working authorized connection is available and observe overwrite, read-back, deletion, and automatic advancement.
