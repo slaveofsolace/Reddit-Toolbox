@@ -39,13 +39,15 @@ Screenshots were inspected for desktop and narrow layouts. Local evidence is ret
 - [x] Existing RC3 installation observed in the owner's signed-in Chrome Reddit tab
 - [x] Owner completed RC4 update; installed version verified on the live Reddit tab
 - [x] Existing-login identity and profile scan against current Reddit
-- [ ] Exact small owner-content batch: script-driven overwrite, read-back, deletion, and automatic advancement
+- [x] Two owner comments: script-driven overwrite, read-back, deletion, and automatic advancement
 - [ ] Live direct-delete/read-back and recovery cases
 - [ ] Fresh Tampermonkey install in Chromium and Firefox
 - [x] RC4 main workflows and public install artifact checksum match
 
 Implementation [e931e72](https://github.com/slaveofsolace/Reddit-Toolbox/commit/e931e728255dcd15297bf04ee2b8dc9a89ae9929) is on main. [CI](https://github.com/slaveofsolace/Reddit-Toolbox/actions/runs/33957277323) and [Build userscript](https://github.com/slaveofsolace/Reddit-Toolbox/actions/runs/33957277300) passed. The public install file matched the tested 128,763-byte artifact on 2026-09-05, SHA-256 `8812f4c4c459ed7d8913467699ec6f8a481cf6c61a45b17b2cb8ef1fecb77363`.
 
-The owner completed the update on 2026-09-05. RC4 was verified in the existing signed-in Chrome tab. Scan history detected the current account and returned profile history directly, with no OAuth setup. A two-comment batch was prepared and its one-time confirmation enabled Run. The final irreversible action awaits the browser tool’s required action-time confirmation. No live edit or deletion has been performed yet.
+On 2026-09-05, the installed RC4 script detected the existing Reddit login and scanned the owner’s profile without OAuth or keys. After the owner confirmed the exact two-comment batch, one Run entire batch action completed both comments in 14 seconds. Each row reported completed · overwritten-and-deleted; final metrics were 2 processed, 2 deleted, 0 remaining, 0 failed, and 0 skipped. Run was disabled after completion.
 
-Website session behavior can change independently of the script; fixture success is not a live result or Reddit endorsement.
+A read-only request trace recorded the sequence edit → delete → edit → delete, with exactly one edit and one deletion request per comment. Identity and item reads occurred around each mutation, including overwrite and deletion verification. All 24 observed cleanup responses returned HTTP 200. The script’s verified completion result, together with the ordered request trace, establishes successful automatic advancement on this live batch. No credentials, original text, replacement text, account identifiers, or target IDs are included in the saved acceptance receipt.
+
+This live result covers the two-comment flow on the installed Chrome userscript. Self-posts, direct deletion of link/media posts, live interruption/recovery scenarios, and fresh Firefox installation remain separate acceptance cases. Website session behavior can change independently of this version; the result does not imply Reddit endorsement.

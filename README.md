@@ -12,7 +12,7 @@ Choose comments and posts, review a finite batch, confirm once, and let it run. 
 2. Open **[Install Reddit Toolbox](https://raw.githubusercontent.com/slaveofsolace/Reddit-Toolbox/main/userscripts/reddit-toolbox.user.js)** and choose **Install**.
 3. Open [www.reddit.com](https://www.reddit.com/), sign in, and select **RT**.
 
-RC4 restores the intended session-based userscript flow. It has automated and isolated browser verification; live cleanup acceptance is tracked separately. See the [acceptance checklist](docs/RELEASE_CHECKLIST.md).
+RC4 uses the existing Reddit session. It passed 73 automated tests, Chromium/Firefox browser fixtures, and a live two-comment overwrite-and-delete batch through the installed Chrome userscript. Broader live acceptance is tracked separately. See the [acceptance checklist](docs/RELEASE_CHECKLIST.md).
 
 ## Clean up
 
