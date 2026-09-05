@@ -97,6 +97,9 @@
     if (normalized.keepSubreddits.includes(cleanSubreddit(item.subreddit))) {
       return 'protected-subreddit';
     }
+    if (normalized.keepSubreddits.length && !cleanSubreddit(item.subreddit)) return 'unknown-subreddit';
+    if (normalized.keepScoreAtOrAbove !== null && Number.isFinite(normalized.keepScoreAtOrAbove)
+      && (item.score === null || item.score === undefined || item.score === '' || !Number.isFinite(Number(item.score)))) return 'unknown-score';
     if (
       normalized.keepScoreAtOrAbove !== null
       && Number.isFinite(normalized.keepScoreAtOrAbove)

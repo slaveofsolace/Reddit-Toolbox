@@ -1,5 +1,7 @@
 # Installation
 
+Install the single RC3 userscript. Its OAuth flow and batch behavior are fixture-tested; real Reddit and Tampermonkey acceptance remain pending. See [connection setup](API_ACCESS.md).
+
 ## Install the userscript
 
 1. Install [Tampermonkey](https://www.tampermonkey.net/) for a supported desktop browser.
@@ -8,6 +10,10 @@
 4. Review the Tampermonkey metadata, then select **Install**.
 5. Sign in to Reddit and reload the tab.
 6. Select the orange **RT** launcher. The Tampermonkey menu also includes **Open Reddit Toolbox**.
+
+## Connect your account
+
+Open **www.reddit.com** and use **Connect Reddit** with your approved installed-app public client ID. Register the exact redirect shown in the panel. Tokens stay in this tab; no password, secret, or backend is needed. [Full instructions](API_ACCESS.md).
 
 ## Prepare broader history
 
@@ -25,7 +31,7 @@ The archive is read locally and is not uploaded by Reddit Toolbox.
 1. Select comments, posts, or both.
 2. Set the date window, maximum amount, ordering, and any exclusions.
 3. Select **Scan history** or import archive CSV files.
-4. Select **Prepare batch** and review the selected rows.
+4. Select **Prepare batch** and review every page of selected rows. Use **Keep this item** to exclude an item from this batch; the confirmation resets.
 5. Export the selected content before deleting anything important.
 6. Type the displayed confirmation once.
 7. Select **Run entire batch**.
@@ -40,7 +46,7 @@ Link and media posts have no editable body. They are skipped unless **Delete lin
 
 ## Update
 
-Tampermonkey checks the userscript's `@updateURL`. Installing a newer build replaces the existing copy.
+Tampermonkey checks the userscript's `@updateURL`. Keep the script name and namespace unchanged for updates. RC3 has a higher version than RC1/RC2 and retains the same name and namespace. Review the new Reddit OAuth network grants when Tampermonkey requests them. Actual update-in-place from RC1 and RC2 remains an unchecked acceptance gate.
 
 ## Remove
 

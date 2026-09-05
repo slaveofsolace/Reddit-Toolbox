@@ -36,10 +36,12 @@
       this.plan = null;
       this.currentIndex = -1;
       this.consecutiveFailures = 0;
+      this.summary = null;
+      this.acquiringLock = false;
     }
 
     progress() {
-      const summary = Core.planSummary(this.plan);
+      const summary = this.summary ? { ...this.summary } : Core.planSummary(this.plan);
       const current = this.currentIndex >= 0 ? this.plan?.items?.[this.currentIndex] || null : null;
       return {
         summary,
@@ -51,6 +53,18 @@
         currentNumber: current ? this.currentIndex + 1 : 0,
         currentFullname: current?.content?.fullname || null
       };
+    }
+
+    setItemStatus(item, status) {
+      if (this.summary) {
+        this.summary[item.status] -= 1;
+        this.summary[status] += 1;
+        const summary = this.summary;
+        summary.processed = summary.completed + summary.skipped + summary.failed;
+        summary.remaining = summary.ready + summary.processing + summary.stopped;
+        summary.percent = summary.total ? Math.round(summary.processed / summary.total * 100) : 0;
+      }
+      item.status = status;
     }
 
     emit(type, detail = {}) {
@@ -127,7 +141,7 @@
     }
 
     async process(queueItem, index, total) {
-      queueItem.status = 'processing';
+      this.setItemStatus(queueItem, 'processing');
       queueItem.phase = 'starting';
       queueItem.startedAt = new Date().toISOString();
       this.emit('item-started', { queueItem, index, total });
@@ -145,10 +159,11 @@
             index,
             total,
             reportPhase,
+            beforeMutation: () => this.waitWhilePaused(),
             isStopRequested: () => this.stopRequested
           });
           queueItem.outcome = outcome || { status: 'completed' };
-          queueItem.status = outcome?.status === 'skipped' ? 'skipped' : 'completed';
+          this.setItemStatus(queueItem, outcome?.status === 'skipped' ? 'skipped' : 'completed');
           queueItem.phase = queueItem.status;
           queueItem.finishedAt = new Date().toISOString();
           this.consecutiveFailures = 0;
@@ -189,7 +204,7 @@
             code: error?.code || 'UNKNOWN_ERROR',
             message: error?.message || String(error)
           };
-          queueItem.status = 'failed';
+          this.setItemStatus(queueItem, 'failed');
           queueItem.phase = 'failed';
           queueItem.finishedAt = new Date().toISOString();
           this.consecutiveFailures += 1;
@@ -211,7 +226,7 @@
       }
 
       if (queueItem.status === 'processing') {
-        queueItem.status = 'stopped';
+        this.setItemStatus(queueItem, 'stopped');
         queueItem.phase = 'stopped';
         queueItem.finishedAt = new Date().toISOString();
       }
@@ -229,30 +244,28 @@
         );
       }
 
-      const key = '__redditToolboxActiveBatchRunner';
-      if (globalThis[key] && globalThis[key] !== this) {
-        throw new Error('Another Reddit Toolbox batch is already active.');
-      }
-      globalThis[key] = this;
-      try {
-        return await operation();
-      } finally {
-        if (globalThis[key] === this) delete globalThis[key];
-      }
+      throw new Error('This browser cannot provide an exclusive cross-tab lock. Cleanup is unavailable.');
     }
 
     async run(plan) {
-      if (ACTIVE_STATES.has(this.state)) throw new Error('This batch runner is already active.');
-      return this.withRunLock(() => this.runBatch(plan));
+      if (this.acquiringLock || ACTIVE_STATES.has(this.state)) throw new Error('This batch runner is already active.');
+      this.acquiringLock = true;
+      try {
+        return await this.withRunLock(() => this.runBatch(plan));
+      } finally {
+        this.acquiringLock = false;
+      }
     }
 
     async runBatch(plan) {
       if (!Core.isPlanCurrent(plan)) throw new Error('The reviewed batch changed. Build a new preview.');
+      Core.lockPlan(plan);
       if (!plan.items.some((item) => item.status === 'ready')) {
         throw new Error('This batch has no queued items.');
       }
 
       this.plan = plan;
+      this.summary = Core.planSummary(plan);
       this.state = 'running';
       this.stopRequested = false;
       this.pauseReason = '';
@@ -273,7 +286,7 @@
         this.emit('batch-progress', { queueItem, index, total: plan.items.length });
         if (this.stopRequested) break;
 
-        const hasMore = plan.items.slice(index + 1).some((item) => item.status === 'ready');
+        const hasMore = this.summary.ready > 0;
         if (hasMore) {
           const delayMs = Core.randomBetween(this.minimumDelayMs, this.maximumDelayMs, this.random);
           this.emit('cooldown', { delayMs, index, total: plan.items.length });
@@ -290,7 +303,7 @@
       if (this.stopRequested) {
         for (const item of plan.items) {
           if (item.status === 'ready') {
-            item.status = 'stopped';
+            this.setItemStatus(item, 'stopped');
             item.phase = 'stopped';
           }
         }
@@ -298,8 +311,8 @@
         this.state = 'stopped';
         this.emit('batch-stopped', { plan });
       } else {
-        plan.status = 'completed';
-        this.state = 'completed';
+        plan.status = this.summary.failed ? 'completed-with-failures' : 'completed';
+        this.state = plan.status;
         this.emit('batch-completed', { plan });
       }
       return Core.planSummary(plan);

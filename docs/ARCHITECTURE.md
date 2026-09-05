@@ -4,7 +4,7 @@ Reddit Toolbox is the first product built on the extracted Toolbox Family core.
 
 ```text
 src/core/       platform-neutral selection, reviewed plans, automated batches, storage, CSV, and errors
-src/reddit/     Reddit content model, session adapter, scanner, and overwrite/delete workflow
+src/reddit/     Reddit content model, userscript OAuth connection, scanner, and overwrite/delete workflow
 src/ui/         Reddit Toolbox presentation and batch controls
 src/main.js     product bootstrap
 ```
@@ -19,7 +19,7 @@ src/main.js     product bootstrap
 | Select a finite target set | `src/core/filters.js` |
 | Bind review to exact targets and options | `src/core/plan.js` |
 | Execute the complete queue automatically | `src/core/runner.js` |
-| Isolate platform requests | `src/reddit/api.js` |
+| Isolate platform requests | `src/reddit/api.js`, `src/reddit/oauth.js` |
 | Coordinate overwrite and deletion | `src/reddit/removal-service.js` |
 | Persist only safe preferences | `src/core/storage.js` |
 | Present Scope → Review → Confirm once → Automate | `src/ui/*` |
@@ -28,6 +28,7 @@ src/main.js     product bootstrap
 
 A reviewed plan has `mode: automated-batch` and contains a fixed ordered list. Its digest includes:
 
+- the account selected during review;
 - each exact Reddit fullname;
 - content kind and editability;
 - whether direct deletion is allowed;
@@ -35,6 +36,8 @@ A reviewed plan has `mode: automated-batch` and contains a fixed ordered list. I
 - continuation and consecutive-failure policy.
 
 After the user types the single plan confirmation, one `BatchRunner.run(plan)` call processes every queued item. The user does not confirm, click, or advance individual rows.
+
+The short digest is a display identifier. Validation also compares the complete canonical binding retained in a private in-memory map, so digest collisions cannot authorize a different batch. Target snapshots and execution options are frozen when execution begins. Deserialized plans are not authorized after reload.
 
 Requests remain sequential. Automation means hands-off orchestration, not concurrent destructive calls.
 
@@ -51,11 +54,11 @@ ready
 
 The runner publishes whole-batch progress, current item, item phase, processed count, remaining count, failures, and wait countdowns. Closing the toolbox panel does not stop the active JavaScript run. The compact launcher displays progress and signals attention.
 
-A browser Web Locks request prevents another tab from acquiring the Reddit Toolbox cleanup lock while a batch is active. An in-page fallback prevents duplicate runners in environments without Web Locks.
+A browser Web Locks request prevents another tab on the same origin from acquiring the cleanup lock while a batch is active. Because these locks do not span subdomains, all destructive requests require `www.reddit.com`. Missing Web Locks support blocks execution. There is no page-only fallback that could silently permit a second tab.
 
 ## Per-item lifecycle
 
-Before each selected item, the service re-fetches the signed-in Reddit session and checks that the account still matches the account that started the batch.
+Before each selected item and each new mutation, the service revalidates the account against the account captured during review. Ownership and live editability are checked again at mutation boundaries. After a pause, the replacement is read again immediately before deletion.
 
 For an editable comment or self-post:
 
@@ -73,7 +76,7 @@ session revalidated
 
 For a link or media post, the item is skipped by default. Direct deletion requires an explicit option in the reviewed batch.
 
-The removal service retains per-fullname mutation state for the life of the page. A retry batch therefore reuses the original replacement and delete-sent state rather than blindly repeating an ambiguous operation.
+The removal service retains per-account, per-fullname mutation state for the life of the page, including across fresh reviews. A retry batch reuses the original replacement and delete-sent state rather than blindly repeating an ambiguous operation. Completed entries cannot be accidentally sent again by preparing a fresh review in the same page.
 
 ## Recovery behavior
 
@@ -87,7 +90,7 @@ The removal service retains per-fullname mutation state for the life of the page
 
 ## Adapter contract
 
-The current Reddit adapter provides:
+The production UI instantiates the userscript OAuth adapter. It connects only with a registered installed-app public client ID and explicit Reddit authorization; see [API access](API_ACCESS.md). The session adapter supplies the page identity cross-check and remains available to isolated tests. Both expose the same removal-service contract.
 
 ```text
 getSession()                       identify the signed-in account
@@ -104,11 +107,11 @@ isDeleted(fullname)                verify the final state
 
 ## Uncertain outcomes
 
-A lost response or HTTP 5xx after an edit or delete is ambiguous. After an edit, the service checks whether the original replacement was saved before another edit is allowed. After a delete, it records that the request may have been sent and verifies the final state. It never sends that deletion a second time automatically. If deletion cannot be proven, the batch pauses.
+A lost response, malformed response, or HTTP 5xx after an edit or delete is ambiguous. After an edit, the service reads back the original replacement. If that cannot be verified, it pauses without resending. After a delete, it records that the request may have been sent and verifies the final state. It never sends that deletion a second time automatically. Missing, malformed, or mismatched item listings do not prove deletion. Unresolved results pause for attention.
 
 ## Build
 
-`scripts/source-order.mjs` is the source-order manifest. The build concatenates metadata and source into one auditable userscript. Tests load the same modules in isolated JavaScript contexts. The integrity check parses the final userscript and rejects dynamic evaluation.
+`scripts/source-order.mjs` is the source-order manifest. The build concatenates metadata and source and writes its SHA-256 checksum. Tests cover both individual modules and the complete generated script. Integrity checks compare the exact source composition, metadata version, and checksum, parse the script, and reject dynamic evaluation. CI rejects uncommitted generated-script or checksum changes.
 
 ## Adding another toolbox
 

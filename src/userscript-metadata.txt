@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Reddit Toolbox
 // @namespace    https://github.com/slaveofsolace
-// @version      1.0.0-rc.2
+// @version      1.0.0-rc.3
 // @description  Automatically overwrite and delete selected Reddit posts and comments in one reviewed batch.
 // @author       slaveofsolace
 // @license      MIT
@@ -9,12 +9,15 @@
 // @match        https://old.reddit.com/*
 // @match        https://new.reddit.com/*
 // @match        https://sh.reddit.com/*
-// @run-at       document-idle
+// @run-at       document-start
 // @noframes
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_deleteValue
 // @grant        GM_registerMenuCommand
+// @grant        GM_xmlhttpRequest
+// @connect      www.reddit.com
+// @connect      oauth.reddit.com
 // @homepageURL  https://github.com/slaveofsolace/Reddit-Toolbox
 // @supportURL   https://github.com/slaveofsolace/Reddit-Toolbox/issues
 // @downloadURL  https://raw.githubusercontent.com/slaveofsolace/Reddit-Toolbox/main/userscripts/reddit-toolbox.user.js

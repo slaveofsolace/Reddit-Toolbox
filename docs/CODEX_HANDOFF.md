@@ -1,123 +1,25 @@
-# Codex Handoff
+# Codex handoff
 
-## Starting point
+RC3 implements the user's userscript-first direction. The product remains one Tampermonkey installation with the extracted platform-neutral core. No backend, companion application, runtime dependency, or external scaffold code was added.
 
-```text
-repository: slaveofsolace/Reddit-Toolbox
-branch: main
-product version: 1.0.0-rc.2
-entry artifact: userscripts/reddit-toolbox.user.js
-```
+## Current implementation
 
-Run first:
+- Default userscript OAuth connection for approved installed-app client IDs; in-memory tokens, popup state/source checks, renewal, disconnect, and current-page account comparison.
+- Disconnected local archive import/review; connection and fresh account-bound review are required before Run can be enabled.
+- Full paginated review, optional per-item exclusion, and reset confirmation after selection changes.
+- Account-bound immutable target snapshots; sequential overwrite, exact read-back, delete, and verification; preserved uncertainty across same-tab retries.
+- Canonical www.reddit.com execution with mandatory Web Locks, pause/stop, automatic retry/cooldown, and closed-panel progress.
+- Protection for archive items with unknown scores/subreddits when the corresponding keep filter is active.
+- Restricted anonymous GM network transport, response-budget pacing, and independent deadline watchdog.
 
-```sh
-npm ci
-npm run check
-```
+Build with npm ci and npm run check. Generated script, metadata/package/lockfile version, and SHA-256 must agree. The release checklist separates synthetic browser evidence from authenticated Reddit and extension evidence.
 
-## Product intent
+## External acceptance still pending
 
-Reddit Toolbox should feel like Insta Toolbox DM Unsend: the operator chooses a finite scope, reviews it once, confirms once, and the tool completes the whole batch without asking the operator to advance individual items.
+No approved client ID was supplied during this implementation. Approval of this own-account use case, the registered redirect, real consent, live identity/listing/deletion response shapes, and long-lived token behavior require acceptance with the actual registered app. See [API access](API_ACCESS.md).
 
-Sequential API requests are intentional. Do not confuse internal serialization with manual one-by-one operation.
+The owner authorized testing and deletion of their own Reddit content on 2026-09-05. No live content was scanned, edited, created, or deleted in this pass. When a working authorized connection is available, prepare a small exact batch and observe the full script-driven flow. Deleting directly through another interface would not test this script.
 
-## Complete in RC2
+Browser Use previously rejected opening Chrome's extension manager and explicitly prohibited workarounds. That action was not retried. Fixture tests in isolated Playwright browsers do not prove Tampermonkey fresh install, update-in-place, extension sandbox messaging, or granted network permissions. Actual extension acceptance needs an allowed route or owner-performed installation.
 
-- Profile scanning for comments and posts with cursor pagination
-- Reddit archive `comments.csv` and `posts.csv` import
-- Type, date, amount, order, subreddit, score, and text filters
-- Fixed reviewed batches with digest-bound destructive options
-- One confirmation for the entire selected batch
-- Automated queue advancement with no per-item click path
-- Current phase, whole-batch progress, panel-closed launcher state, pause, and stop
-- Automatic rate-limit waiting and bounded temporary-failure retries
-- Continuation after isolated permanent failures
-- Five-consecutive-failure attention guard
-- Retry-batch construction from failed and stopped rows
-- Session/account revalidation and ownership verification before every mutation
-- Comment/self-post overwrite → verify → delete → verify
-- Direct-delete opt-in for link and media posts
-- Ambiguous edit/delete protection and same-page retry state reuse
-- Cross-tab Web Locks exclusion with an in-page fallback
-- Navigation warning while a batch is active
-- Local-only preferences, deterministic build, CI, checksums, and automated tests
-
-## Priority 1 — authenticated Reddit acceptance
-
-The current `RedditSessionClient` uses the signed-in same-origin browser session and modhash. It is isolated behind the adapter and covered by mocks, but it has not been accepted against live Reddit in this environment.
-
-Use disposable content and complete every unchecked item in `docs/RELEASE_CHECKLIST.md`. Start with a two-comment batch so the test proves automatic queue advancement rather than only a single-item mutation.
-
-Capture sanitized fixtures for accepted response shapes. Never commit cookies, modhashes, bearer tokens, account identifiers, raw archives, or real user content.
-
-## Priority 2 — settle authentication
-
-Confirm whether the same-origin approach remains functional and permitted under Reddit's current API requirements. If it does not, replace only `src/reddit/api.js` with a user-authorized OAuth adapter. Preserve the scanner, normalized model, removal service, batch runner, and UI contracts.
-
-OAuth constraints:
-
-- Use a maintainer-owned registered Reddit application and obtain approval where required.
-- Prefer a public/installed-client flow suitable for a userscript; never embed a client secret.
-- Request only identity, history/read, and edit/delete scopes actually needed.
-- Validate authorization state and bind the returned identity to the reviewed batch.
-- Store tokens in Tampermonkey storage only when necessary and provide disconnect/revoke.
-- Send bearer requests only to Reddit's documented OAuth host.
-- Add tests for denied consent, wrong state, wrong account, expiry, refresh, revocation, 401, 403, and 429.
-
-Do not collect Reddit passwords, copy cookies, imitate private clients, automate challenges, evade rate limits, or add a remote credential backend.
-
-## Priority 3 — browser acceptance
-
-Validate the rendered userscript on desktop Chromium and Firefox/Tampermonkey:
-
-- one approval starts all selected items;
-- closing the panel leaves the batch active;
-- launcher percentage, remaining badge, attention state, and completion state remain accurate;
-- pause during pacing and resume after session refresh;
-- stop during pacing and during an in-flight item;
-- long rate-limit countdowns;
-- retry-batch preparation after mixed completed, failed, and stopped rows;
-- narrow and mobile-width panel layouts;
-- accidental navigation warning;
-- Web Locks behavior across two Reddit tabs.
-
-Do not add per-item confirmation or per-item Next buttons to solve UI uncertainty. Pause the batch only for a material safety ambiguity.
-
-## Priority 4 — edge cases
-
-Test and add sanitized regressions for:
-
-- archived, locked, removed, or already-deleted content;
-- suspended accounts and security challenges;
-- Reddit eventual-consistency delays after edit and delete;
-- archive rows missing a usable fullname;
-- very large histories and page-cap reporting;
-- account changes between items;
-- network loss before a mutation versus after a mutation;
-- a delete request whose response is lost;
-- a retry batch that resumes an item whose overwrite already succeeded.
-
-## Priority 5 — release packaging
-
-After authenticated acceptance:
-
-1. Remove the RC warning only when justified.
-2. Regenerate the userscript and `SHA256SUMS.txt`.
-3. Tag the next release candidate or `v1.0.0`.
-4. Publish `reddit-toolbox.user.js` and checksums through GitHub Releases.
-5. Test Tampermonkey update-in-place from RC1 and RC2.
-6. Keep generated-artifact diffs clean in CI.
-
-## Constraints to preserve
-
-- Scope → Review → Confirm once → Automated batch remains the primary workflow.
-- No per-item operator action during a healthy run.
-- No automatic start and no silent resume after reload.
-- No mutation after the signed-in account changes.
-- No deletion before ownership and overwrite verification for editable content.
-- No automatic resend after an ambiguous delete.
-- Direct deletion stays explicit and plan-bound.
-- Requests remain sequential, paced, stoppable, and observable.
-- No analytics, credential collection, remote control, dynamic evaluation, or unnecessary dependencies.
-- Keep copy direct and code small; do not add generated filler.
+The user explicitly requested committing completed implementation to main. RC3 source distribution is a development candidate; no stable tag, production acceptance, platform approval, or perfected live cleanup is claimed. Continue through [Release Checklist](RELEASE_CHECKLIST.md) before declaring release acceptance.

@@ -18,7 +18,7 @@
       return buffer[0] % maxExclusive;
     }
 
-    return Math.floor(Math.random() * maxExclusive);
+    throw new Error('Secure random generation is unavailable. Cleanup cannot start.');
   }
 
   function randomLetterString(length = 24, randomSource = globalThis.crypto) {
