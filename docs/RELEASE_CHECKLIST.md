@@ -42,20 +42,32 @@ Local evidence is retained under work/browser-rc6 in the project handoff folder.
 
 ## RC6 live coverage
 
-- [ ] RC6 installed-version and current-login verification
+- [x] RC6 installed-version and current-login verification
 - [x] Reproduce the owner’s actual failure response and independently verify deletion
-- [ ] Installed RC6 batch completion with correct deleted counts
+- [x] Installed RC6 batch completion with correct deleted counts
+- [x] Both completed comments independently show Comment deleted by user on Reddit
+- [x] Installed No limit scan and Set a limit review updates
 - [ ] Fresh Firefox Tampermonkey installation
 
 On 2026-09-05 Chrome background control attached to the owner's RC5 run: six processed comments were incorrectly reported as unconfirmed. The run was paused and stopped at six processed, leaving 294 untouched targets stopped. A captured deletion returned HTTP 200 and an empty JSON object; the exact-target verification returned author [deleted] and body [removed]. A fresh comment page independently showed the first failed target as deleted. The old verifier deliberately rejected that combination, causing six repeated reads per item. A later response exhausted the request allowance; the next identity read returned HTTP 429 with x-ratelimit-reset but no Retry-After. These observed shapes drive the RC6 regressions.
 
-This diagnosis establishes that the observed deletion succeeded while the RC5 result was wrong. RC6 installed-script acceptance is tracked below and must not be inferred from the fixtures.
+After the owner completed the RC6 update, a fresh Chrome Reddit tab displayed RC6 and scanned through the existing login. No limit selected all 362 available comments and hid the numeric field. Switching to Set a limit with 2 rebuilt the review to the next two untouched comments from the owner's original batch.
+
+One Delete 2 items action completed both comments in approximately eight seconds, with 2 deleted, 0 needing recheck, 0 failed, and 0 skipped. Both rows displayed Deleted; the completed Delete, Pause, and Stop controls were disabled. The request trace contained exactly edit → delete → edit → delete, with all 24 cleanup responses returning HTTP 200. Each final exact-target response contained author [deleted] and body [removed], exercising the actual RC5 failure shape. Each native Reddit comment page independently displayed Comment deleted by user and author [deleted].
+
+The original stopped RC5 tab remains preserved. RC6 acceptance deleted only those two additional comments; the other 292 untouched targets from the original batch were not run. A sanitized receipt is retained locally as work/rc6-live-completion.json in the project handoff folder. It contains no account or target identifiers, original content, or session values.
+
+This verifies the installed Chrome userscript's two-comment workflow and No limit control. Live post deletion, live interruption/recovery cases, and fresh Firefox installation remain separate acceptance cases. Chromium/Firefox fixtures cover simulated recovery; they do not replace those live checks.
+
+## RC6 distribution
+
+Implementation [b8f73f2](https://github.com/slaveofsolace/Reddit-Toolbox/commit/b8f73f239330bf666850e4360c6d08f6d6923b25) is on main. [CI](https://github.com/slaveofsolace/Reddit-Toolbox/actions/runs/33982026877) and [Build userscript](https://github.com/slaveofsolace/Reddit-Toolbox/actions/runs/33982026813) passed. The public install file and checksum matched the local 149,057-byte artifact on 2026-09-05: SHA-256 `dbf423695ab736feda82f7c6aa39390de5f5b92c62a76e61c1e254a10f131645`.
 
 ## Prior RC5 distribution
 
 Implementation [c596861](https://github.com/slaveofsolace/Reddit-Toolbox/commit/c596861b6dd39dedbe85e457d34e8dfafd3e329d) is on main. [CI](https://github.com/slaveofsolace/Reddit-Toolbox/actions/runs/33979102549) and [Build userscript](https://github.com/slaveofsolace/Reddit-Toolbox/actions/runs/33979102633) passed. The public install file and checksum matched the local 145,407-byte artifact on 2026-09-05: SHA-256 `f90913edeb181cfc26f7a774bd6793e70e5865739052c32930c067c8451246fd`.
 
-The RC5 Tampermonkey update prompt was opened. Browser URL policy rejected access to the extension's update page, so the owner must complete its Update click. A fresh Reddit tab still displayed RC4 at the last check. No attempt was made to bypass the blocked extension page, and no new live deletion was performed during this repair.
+At the earlier RC5 distribution checkpoint, the Tampermonkey prompt required the owner's Update click because browser URL policy rejected the extension update page. The owner subsequently installed RC5 and RC6. The RC6 live coverage above supersedes that installation checkpoint; the extension-page restriction was not bypassed.
 
 ## Earlier live baseline (RC4)
 

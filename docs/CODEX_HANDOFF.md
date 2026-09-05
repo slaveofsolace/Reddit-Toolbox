@@ -1,37 +1,35 @@
 # Codex handoff
 
-## RC6 live repair
+## Current checkpoint: RC6 live acceptance complete
 
-Chrome background control now attaches to the owner's actual tab. The failing installed RC5 run had 300 selected comments, with the first six reported unconfirmed. It is stopped at six processed with 294 untouched items stopped. A live delete returned HTTP 200 {}, then exact-target info returned author [deleted] / body [removed]. The native comment page marks the first target deleted. RC6 fixes this acknowledged, ownership-verified transition without accepting moderation removal alone. It also respects x-ratelimit-reset and an exhausted request budget, keeps start/resume identity validation inside automatic runner recovery, and adds explicit No limit / Set a limit controls. 89 tests pass; portable browser fixtures include the live response shape. Installed RC6 acceptance is still required.
+RC6 implementation b8f73f239330bf666850e4360c6d08f6d6923b25 is committed and pushed to main. CI and Build userscript passed. The public userscript and checksum match the local 149,057-byte artifact, SHA-256 dbf423695ab736feda82f7c6aa39390de5f5b92c62a76e61c1e254a10f131645. The owner completed the Tampermonkey update, and a fresh Chrome Reddit tab displayed RC6.
 
-The original 300-comment scope was selected and started by the owner. Preserve its stopped checkpoint. Do not publish target IDs, account identifiers, original text, session values, or full request headers. The extension-update URL policy restriction still applies; do not bypass it.
+Chrome background control reproduced the owner's actual RC5 failure. Six comments from their user-started 300-comment batch were reported unconfirmed even though deletion succeeded. An observed delete returned HTTP 200 {}, followed by exact-target info containing author [deleted] / body [removed]. Repeated unsuccessful verification exhausted the request allowance. The rate-limit response supplied x-ratelimit-reset without Retry-After. RC6 recognizes that specific transition only after verified ownership and an acknowledged deletion, respects the actual reset deadline, and handles start/resume validation through the runner's automatic recovery.
 
-## Earlier RC5 checkpoint
+The installed RC6 No limit control selected all 362 available comments and hid the numeric field. Set a limit with 2 automatically rebuilt the review to the next two untouched comments from the owner's original batch. One Delete 2 items action completed both in approximately eight seconds: 2 deleted, 0 needing recheck, 0 failed, 0 skipped. Both rows displayed Deleted, and completed Delete/Pause/Stop controls were disabled. All 24 cleanup responses returned HTTP 200, with exactly edit → delete → edit → delete. Both final responses exercised the observed [deleted] author / [removed] body shape. Each native Reddit comment page independently showed Comment deleted by user and author [deleted].
 
-RC5 addresses the owner's report of too many setup/confirmation steps, a fixed panel, and deletion verification trapping the batch. The product remains a userscript using the existing Reddit browser login. Do not reintroduce OAuth, client IDs, API keys, or a backend.
+The original RC5 tab remains stopped at six processed and 294 stopped rows. Two of those targets were subsequently deleted by the RC6 acceptance batch; 292 other untouched targets were not run. Preserve the old checkpoint and the successful RC6 tab. Do not rerun completed targets. Local sanitized evidence is saved as work/rc6-live-diagnosis.json, work/rc6-live-completion.json, and work/rc6-distribution.json in the project handoff folder. No account or target identifiers, original text, full request headers, or session values belong in the repository or receipts.
 
-The user authorized committing to main, installing/updating software, and testing their own Reddit content. Use a concrete exact batch for any live destructive acceptance under the applicable tool policy. The previously confirmed RC4 two-comment batch is complete and must not be repeated.
+## Product behavior
 
-## Current implementation
-
-- Find matching items scans and prepares the review in one action. Filters rebuild it automatically; Delete N items is the single explicit batch authorization.
+- Userscript first with the existing Reddit browser login. No OAuth, client IDs, API keys, or backend.
+- Find matching items scans and prepares the review in one action. Filters rebuild it automatically; Delete N items starts the reviewed batch.
+- Explicit No limit and Set a limit choices. No limit processes all discovered matching items; it does not promise access beyond Reddit's listing limits.
 - More options holds secondary controls. Local archive import prepares a review, and Check login can bind it after signing in.
 - Header/launcher dragging, both bottom resize corners, keyboard handles, saved geometry, viewport clamping, and reset layout.
-- Sticky run controls and honest separate deleted, unconfirmed, and failed totals; completed items excluded from later selections in the same tab.
-- Expanded deleted markers and accepted-and-absent verification; missing data alone is insufficient. One bounded retry for a verified acknowledged no-op. Lost deletion responses are never blindly resent.
-- Unconfirmed rows continue the batch; read-only Recheck results revalidates the account and sends no POST.
-- Existing account binding, ownership/editability checks, saved-text verification, pacing, Web Locks, and reload boundaries retained.
+- Sticky controls with separate deleted, unconfirmed, and failed totals. Completed items are excluded from later selections in the same tab.
+- Verified deletion markers and acknowledged repeated absence; moderation removal alone and missing data alone are insufficient. One bounded retry for an acknowledged no-op; no blind resend after a lost deletion response.
+- Unconfirmed rows continue the batch. Read-only Recheck results revalidates the account, waits through rate limits, and supports Cancel recheck without sending another POST or losing stopped targets.
+- Account binding, mutation-boundary ownership/editability checks, saved-text verification, pacing, Web Locks, and reload boundaries remain in place.
 
-Build with npm ci and npm run check (83 tests). npm run test:browser runs the portable isolated Chromium/Firefox acceptance fixture; optional tooling instructions and scope are in [the release checklist](RELEASE_CHECKLIST.md). No user content or credentials belong in the repository or acceptance receipts.
+## Validation and remaining coverage
 
-## Live checkpoint
+Build with npm ci and npm run check: 89 Node tests pass, with deterministic composition, matching versions, syntax, and SHA-256 checks. npm run test:browser runs the portable isolated Chromium/Firefox fixture; both passed. Optional tooling instructions and coverage are in [the release checklist](RELEASE_CHECKLIST.md). Synthetic fixtures include the live response shape, rate-limit recovery, recheck cancellation, resizing, persistence, keyboard controls, cross-tab locking, and large archive review.
 
-RC5 implementation c596861 is committed and pushed to main. Its CI/build workflows passed and the public artifact/checksum match. The RC5 update prompt is open, but CUA's URL policy blocked access to its extension page. The owner was asked to click Update. A fresh Reddit tab still showed RC4 at the last check; installed RC5 acceptance remains pending. Do not bypass the rejected extension page through another tool or raw commands.
+Installed Chrome comment deletion and No limit are verified live. Live self-post/link/media deletion, live interruption/recovery, and fresh Firefox installation are not claimed. Website session behavior can change independently of this version. No stable-release tag is implied.
 
-The old Reddit tab holding the reported stalled run could not be attached through CUA (Debugger unattached). A fresh Reddit diagnosis tab is accessible. Preserve the old tab until the owner finishes/stops the run; do not reload away its evidence. The specific failing comment has not yet been supplied. Synthetic recovery tests do not constitute a live reproduction of that exact case.
+## Authorization and browser boundaries
 
-The owner completed the RC4 update and confirmed the exact two-comment live batch on 2026-09-05. The installed Chrome script scanned using the existing login, then one Run entire batch action completed both comments in 14 seconds: 2 deleted, 0 failed, 0 skipped. Both rows reported overwritten-and-deleted. Read-only network tracing observed edit → delete → edit → delete, with no duplicate mutation requests and HTTP 200 for all 24 cleanup responses. The completed batch has Run disabled; do not run it again. Local evidence is saved as work/rc4-live-completion.json in the project handoff folder.
+The owner authorized committing to main, installs/updates, and live testing on their own Reddit content. The RC6 test used an exact two-comment subset of the 300-comment scope they had already selected and started. Previously completed RC4 and RC6 acceptance targets must not be repeated.
 
-The RC4 installation and two-comment live workflow are now verified. The earlier Chrome extension-manager rejection was specific to that manager action and must not be bypassed. No client ID is needed. Further live post or recovery cases would require their own exact target selection; the completed two-comment batch needs no further mutations.
-
-Session requests are an unofficial website integration. The two-comment live result supplements the 73 Node tests and Chromium/Firefox fixtures. Self-post/direct-delete and live recovery cases remain unchecked in the release checklist; no broader live coverage or stable-release tag is implied.
+Chrome automation uses CUA background control. Its URL policy rejected the Tampermonkey extension update page; the owner completed Update manually. That restriction must not be bypassed using another tool, raw CDP, shell commands, or extension-manager changes. Isolated browser fixtures use synthetic traffic and never attach to the owner's profile.
