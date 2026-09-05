@@ -48,9 +48,15 @@ For local development, install optional test tooling with **npm install --no-sav
 
 Local evidence is retained under work/browser-rc7 in the project handoff folder. The test's simulated lost response intentionally produces a browser network error.
 
-## RC7 installation checkpoint
+## RC7 installed live pacing acceptance
 
-The owner reported another rate limit during a larger RC6 run. Chrome background control found that run with 16 deleted, no unconfirmed/failed items, and 344 remaining out of 360. It was paused through the UI during the cooldown, preserving the review. No new deletion was started for RC7 testing. RC7 installation is pending the owner's Tampermonkey Update click; the extension update-page URL policy remains in force. RC6 live deletion evidence below does not establish RC7 installed acceptance.
+The owner completed the RC7 Tampermonkey update on 2026-09-05. A fresh Chrome Reddit tab displayed RC7 with no speed controls. A read-only No limit scan selected 344 remaining comments. Its identity request and four listing requests returned HTTP 200; request starts were separated by 7,502 ms, 7,502 ms, 7,500 ms, and 7,501 ms. No rate-limit error occurred. Reddit reported 99 through 95 requests remaining, and the UI showed automatic pacing countdowns between requests. No edit or deletion request was sent during this acceptance check.
+
+The old RC6 run had 16 deleted, no unconfirmed/failed items, and 344 remaining out of 360. It was first paused during its cooldown and then stopped through the UI after RC7 verification, releasing its cleanup lock while preserving the review. The fresh RC7 tab remains available with the 344-item review; no new batch was started. Sanitized live evidence is retained as work/rc7-live-pacing.json in the project handoff folder. It contains no identifiers, content, credentials, or full request headers.
+
+Implementation [6dec347](https://github.com/slaveofsolace/Reddit-Toolbox/commit/6dec347063f349c619055a828aad12496dfc2f6a) is on main. [CI](https://github.com/slaveofsolace/Reddit-Toolbox/actions/runs/33984334838) and [Build userscript](https://github.com/slaveofsolace/Reddit-Toolbox/actions/runs/33984334849) passed. The public userscript/checksum matched the 152,450-byte artifact: SHA-256 `6cd82effcb07b619cf333d15c36049b5115f295815a8ca8f505c4ebe6e6373af`.
+
+This confirms installed Chrome read-only pacing and settings migration. The RC6 live deletion evidence below remains a separate result; RC7 live deletion, live low-budget adaptation, and fresh Firefox installation are not claimed. The extension update-page policy was respected; the owner performed the Update click.
 
 ## RC6 live coverage
 
