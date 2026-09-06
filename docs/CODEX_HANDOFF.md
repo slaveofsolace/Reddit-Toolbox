@@ -1,6 +1,14 @@
 # Codex handoff
 
-## Current checkpoint: RC7 installed pacing verified
+## Current checkpoint: RC7 batch verification blocked by Chrome connection
+
+The owner explicitly authorized testing the prepared 344-comment No limit review, with no posts. One Delete 344 items action started at 2026-09-05 19:52:31 UTC. The last successful live check at 2026-09-06 02:21:27 UTC reported 243 deleted, 101 remaining, 0 failed, 0 unconfirmed, 0 skipped, with item 244 in progress. Automatic pacing and overwritten-and-deleted outcomes were observed throughout the available checks.
+
+At the 2026-09-06 06:25 UTC follow-up, CUA had no Chrome connection; only the Codex in-app browser was available. The final result is unknown. The monitor verify-the-344-comment-reddit-cleanup was paused pending reconnection. The aggregate receipt work/rc7-full-batch.json in the project handoff folder preserves the last live observation and all prior checks separately from this verification blocker. Do not infer that the batch stopped at the last observed count.
+
+Resume by locating the existing Chrome run (previous tab 146680204 on www.reddit.com) through CUA. Preserve its completed or running review. Do not start another batch, add targets, reload the run, or resend uncertain deletions. Use read-only Recheck results for terminal unconfirmed rows if needed. Accept the full test only after 344 deleted and zero remaining/failed/unconfirmed/skipped, then independently scan current comment history read-only in a fresh tab and update this checkpoint. Re-enable the existing heartbeat only if continued monitoring is needed.
+
+## RC7 installed pacing acceptance before the batch
 
 RC7 removes speed preferences and replaces item-level pacing with admission control for every request. The minimum interval is 7.5 seconds (at most eight requests per minute). Remaining/reset headers slow requests before exhaustion, preserving headroom; HTTP and JSON rate-limit responses persist cooldowns. A separate Web Lock and anonymous timing deadlines coordinate same-origin toolbox tabs and survive reloads. The network timeout starts after admission. Waiting requests respect pause and read-only recheck cancellation. The UI shows a countdown in a stable space; old saved speed values are ignored.
 
@@ -8,9 +16,9 @@ RC7 removes speed preferences and replaces item-level pacing with admission cont
 
 The owner completed the RC7 Update click. A fresh Chrome Reddit tab displayed RC7, had no speed controls, and completed a No limit scan selecting 344 remaining comments. The identity read and four profile pages all returned HTTP 200, with request intervals of 7,502 ms, 7,502 ms, 7,500 ms, and 7,501 ms. The live read-only trace contained no edit/deletion requests and no rate-limit errors. The countdown was visible while waiting. Sanitized evidence is work/rc7-live-pacing.json in the project handoff folder.
 
-The old RC6 No limit batch was paused during a cooldown at 16 deleted, 0 needing recheck, 0 failed, and 344 remaining out of 360. After RC7 verification it was stopped through the UI, releasing its cleanup lock while preserving its review. The new RC7 tab remains available with the 344-item review, ready for the owner's next action. No new deletion batch was started. Do not resume the old RC6 code or reload away either review incidentally.
+The old RC6 No limit batch was paused during a cooldown at 16 deleted, 0 needing recheck, 0 failed, and 344 remaining out of 360. After RC7 verification it was stopped through the UI, releasing its cleanup lock while preserving its review. At this earlier pacing checkpoint the new RC7 tab held the 344-item review; the subsequently authorized batch is described above. Do not resume the old RC6 code or reload away either review incidentally.
 
-Implementation 6dec347063f349c619055a828aad12496dfc2f6a is on main; CI and Build userscript passed. The public 152,450-byte artifact and checksum matched locally: SHA-256 6cd82effcb07b619cf333d15c36049b5115f295815a8ca8f505c4ebe6e6373af. Installed Chrome read-only pacing is verified; RC7 live deletion/low-budget adaptation and fresh Firefox installation are not claimed. The owner performed the extension Update click, respecting the URL policy restriction.
+Implementation 6dec347063f349c619055a828aad12496dfc2f6a is on main; CI and Build userscript passed. The public 152,450-byte artifact and checksum matched locally: SHA-256 6cd82effcb07b619cf333d15c36049b5115f295815a8ca8f505c4ebe6e6373af. Installed Chrome read-only pacing and the partial live batch progress above are verified; full-batch completion, live low-budget adaptation, and fresh Firefox installation are not claimed. The owner performed the extension Update click, respecting the URL policy restriction.
 
 Reddit's historical non-OAuth publication states ten requests per minute, while current guidance warns that throttling can vary. Eight is a conservative tool ceiling, not a promise that Reddit never rate-limits shared/account-specific traffic. Sources and the algorithm are documented in API_ACCESS.md. The product remains userscript first with the existing browser session.
 

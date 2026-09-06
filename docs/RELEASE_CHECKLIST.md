@@ -52,11 +52,23 @@ Local evidence is retained under work/browser-rc7 in the project handoff folder.
 
 The owner completed the RC7 Tampermonkey update on 2026-09-05. A fresh Chrome Reddit tab displayed RC7 with no speed controls. A read-only No limit scan selected 344 remaining comments. Its identity request and four listing requests returned HTTP 200; request starts were separated by 7,502 ms, 7,502 ms, 7,500 ms, and 7,501 ms. No rate-limit error occurred. Reddit reported 99 through 95 requests remaining, and the UI showed automatic pacing countdowns between requests. No edit or deletion request was sent during this acceptance check.
 
-The old RC6 run had 16 deleted, no unconfirmed/failed items, and 344 remaining out of 360. It was first paused during its cooldown and then stopped through the UI after RC7 verification, releasing its cleanup lock while preserving the review. The fresh RC7 tab remains available with the 344-item review; no new batch was started. Sanitized live evidence is retained as work/rc7-live-pacing.json in the project handoff folder. It contains no identifiers, content, credentials, or full request headers.
+The old RC6 run had 16 deleted, no unconfirmed/failed items, and 344 remaining out of 360. It was first paused during its cooldown and then stopped through the UI after RC7 verification, releasing its cleanup lock while preserving the review. At that pacing checkpoint the fresh RC7 tab held the 344-item review and no new batch had been started. The subsequent authorized batch is described below. Sanitized live evidence is retained as work/rc7-live-pacing.json in the project handoff folder. It contains no identifiers, content, credentials, or full request headers.
 
 Implementation [6dec347](https://github.com/slaveofsolace/Reddit-Toolbox/commit/6dec347063f349c619055a828aad12496dfc2f6a) is on main. [CI](https://github.com/slaveofsolace/Reddit-Toolbox/actions/runs/33984334838) and [Build userscript](https://github.com/slaveofsolace/Reddit-Toolbox/actions/runs/33984334849) passed. The public userscript/checksum matched the 152,450-byte artifact: SHA-256 `6cd82effcb07b619cf333d15c36049b5115f295815a8ca8f505c4ebe6e6373af`.
 
-This confirms installed Chrome read-only pacing and settings migration. The RC6 live deletion evidence below remains a separate result; RC7 live deletion, live low-budget adaptation, and fresh Firefox installation are not claimed. The extension update-page policy was respected; the owner performed the Update click.
+This confirms installed Chrome read-only pacing and settings migration. The RC7 live batch checkpoint below adds partial deletion evidence; live low-budget adaptation and fresh Firefox installation are not claimed. The extension update-page policy was respected; the owner performed the Update click.
+
+## RC7 authorized 344-comment batch: final verification pending
+
+The owner then explicitly authorized testing all 344 comments in the prepared No limit review, with no posts. One Delete 344 items action started the frozen batch at 2026-09-05 19:52:31 UTC. Background checks observed continued progress with automatic pacing. At the last successful check, 2026-09-06 02:21:27 UTC, the toolbox reported 243 deleted, 101 remaining, 0 failed, 0 unconfirmed, and 0 skipped; item 244 was in progress. The sanitized log reported overwritten-and-deleted outcomes. No second batch was started.
+
+At the 2026-09-06 06:25 UTC follow-up, Chrome was unavailable to CUA; the browser inventory contained only the Codex in-app browser. The final batch state is unknown. The monitoring heartbeat was paused pending reconnection. This is a verification blocker, not evidence that the cleanup failed or stopped at 243. Aggregate evidence and all prior checkpoints are preserved in work/rc7-full-batch.json in the project handoff folder.
+
+- [x] Installed RC7 sustained progress through 243 confirmed deletions without reported failures, unconfirmed outcomes, or skips
+- [ ] Verify final totals: 344 deleted, 0 remaining, 0 failed, 0 unconfirmed, 0 skipped
+- [ ] Independently scan current comment history read-only after completion in a fresh tab
+
+Reconnect to the existing run and preserve its review before taking any action. Do not restart the batch or resend uncertain deletions. Terminal unconfirmed results may be rechecked using the read-only Recheck results control. The full 344-comment test is not yet accepted.
 
 ## RC6 live coverage
 
