@@ -58,7 +58,9 @@ Implementation [6dec347](https://github.com/slaveofsolace/Reddit-Toolbox/commit/
 
 This confirms installed Chrome read-only pacing and settings migration. The RC7 live batch checkpoint below adds partial deletion evidence; live low-budget adaptation and fresh Firefox installation are not claimed. The extension update-page policy was respected; the owner performed the Update click.
 
-## RC7 authorized 344-comment batch: final verification pending
+## RC7 authorized 344-comment batch: incomplete, 97 found on rescan
+
+On 2026-09-06 Chrome CUA was available again, but the original run tab was not found. A fresh installed RC7 scan of the same signed-in account used Comments only, All time, No limit and found 97 comments: 97 selected, 0 excluded, 0 posts. No new deletion batch was started. This confirms remaining profile-visible content; it does not recover the original run's final outcome counters or establish 344 successful deletions. The aggregate rescan is preserved in work/rc7-full-batch.json alongside the earlier checkpoints.
 
 The owner then explicitly authorized testing all 344 comments in the prepared No limit review, with no posts. One Delete 344 items action started the frozen batch at 2026-09-05 19:52:31 UTC. Background checks observed continued progress with automatic pacing. At the last successful check, 2026-09-06 02:21:27 UTC, the toolbox reported 243 deleted, 101 remaining, 0 failed, 0 unconfirmed, and 0 skipped; item 244 was in progress. The sanitized log reported overwritten-and-deleted outcomes. No second batch was started.
 

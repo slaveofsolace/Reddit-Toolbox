@@ -1,6 +1,10 @@
 # Codex handoff
 
-## Current checkpoint: RC7 batch verification blocked by Chrome connection
+## Current checkpoint: RC7 rescan finds 97 comments remaining
+
+On 2026-09-06 Chrome CUA became available again after the owner explicitly invoked the Chrome/Computer plugins. The original run tab was not found. A fresh installed RC7 tab verified the same signed-in account and scanned Comments only, All time, No limit: 97 found, 97 selected, 0 excluded, 0 posts. No deletion was sent. The full cleanup is incomplete; do not claim 344 successful deletions or infer exact final counters from the difference in listing counts. The fresh review is preserved pending authorization for that concrete 97-item batch. The prior monitor remains paused. Aggregate rescan evidence is appended to work/rc7-full-batch.json.
+
+### Earlier monitoring checkpoint
 
 The owner explicitly authorized testing the prepared 344-comment No limit review, with no posts. One Delete 344 items action started at 2026-09-05 19:52:31 UTC. The last successful live check at 2026-09-06 02:21:27 UTC reported 243 deleted, 101 remaining, 0 failed, 0 unconfirmed, 0 skipped, with item 244 in progress. Automatic pacing and overwritten-and-deleted outcomes were observed throughout the available checks.
 
