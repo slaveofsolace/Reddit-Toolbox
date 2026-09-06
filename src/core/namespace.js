@@ -3,13 +3,13 @@
 
   const family = globalThis.ToolboxFamily || {};
   family.Core ||= {};
-  family.version = '1.0.0-rc.7';
+  family.version = '1.0.0-rc.8';
 
   const toolbox = globalThis.RedditToolbox || {};
   toolbox.Core = family.Core;
   toolbox.Reddit ||= {};
   toolbox.UI ||= {};
-  toolbox.version = '1.0.0-rc.7';
+  toolbox.version = '1.0.0-rc.8';
 
   globalThis.ToolboxFamily = family;
   globalThis.RedditToolbox = toolbox;

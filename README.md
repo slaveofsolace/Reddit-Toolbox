@@ -1,51 +1,49 @@
 # Reddit Toolbox
 
-**Install the userscript. Sign in to Reddit. Clean up your own history.**
+Delete your Reddit comments and posts from a movable, resizable panel in your browser.
 
-No OAuth setup, app registration, client ID, API key, backend, or companion app. Reddit Toolbox uses the Reddit login already active in your browser tab.
+**[Install Reddit Toolbox](https://raw.githubusercontent.com/slaveofsolace/Reddit-Toolbox/main/userscripts/reddit-toolbox.user.js)** · [Installation guide](docs/INSTALLATION.md) · [Changelog](CHANGELOG.md)
 
-Choose comments and posts, review the matches, select Delete, and let it run. Editable bodies are overwritten with random letters, checked, then deleted. Closing the panel leaves the batch running and the floating RT button shows progress.
+Uses your existing Reddit login. No API key, app registration, or separate service.
 
-## Install
+## Get started
 
-1. Install [Tampermonkey](https://www.tampermonkey.net/) and enable userscripts for your browser.
-2. Open **[Install Reddit Toolbox](https://raw.githubusercontent.com/slaveofsolace/Reddit-Toolbox/main/userscripts/reddit-toolbox.user.js)** and choose **Install**.
-3. Open [www.reddit.com](https://www.reddit.com/), sign in, and select **RT**.
+1. Install [Tampermonkey](https://www.tampermonkey.net/) and enable userscripts when prompted.
+2. Open the install link above and select **Install**.
+3. Sign in at [www.reddit.com](https://www.reddit.com/) and open **RT**.
+4. Choose comments or posts, dates, and **No limit** or a specific count. Select **Find matching items**.
+5. Review the selection. **Keep** excludes an item; **Save a copy** exports the selected content. Select **Delete N items** to begin.
 
-RC7 automatically paces every request, including scans and verification, with no speed setting to configure. It passes 99 automated tests. Current browser and live coverage are recorded in the [acceptance checklist](docs/RELEASE_CHECKLIST.md).
+Deletion is permanent. Editable text is overwritten and checked before deletion; each result is verified. **Keep the Reddit tab open and your computer awake until the batch finishes.** You can close the panel and follow progress on the RT button. Closing or reloading the tab loses the current run; it does not resume automatically.
 
-## Clean up
+## While it runs
 
-Open RT on **www.reddit.com**. Your existing login is detected automatically. [How the session works](docs/API_ACCESS.md).
+- **Speed is automatic.** Every request is spaced at least 7.5 seconds apart. Reddit cooldowns can extend the wait. A comment needs several requests, so large batches take hours.
+- **Pause** holds before the next mutation. **Stop** finishes the current item and stops the rest.
+- **Needs recheck** means deletion is not yet confirmed. Use **Recheck results** to verify it without sending another deletion.
+- **Review retries** prepares failed or stopped items for another review.
 
-1. Choose comments, posts, dates, and **No limit** or a specific number of items. Select **Find matching items**.
-2. Review the matches. **Keep** excludes individual items; **Save a copy** exports the selection. Select **Delete N items** to start the reviewed batch.
+Drag the header or RT button to move them. Drag either bottom corner to resize the panel. Layout is remembered; the header reset button restores it. Move and resize handles also support arrow keys and Shift for larger changes.
 
-There is no typed phrase, separate preparation button, or per-item confirmation. Changing a filter updates the review automatically. Refresh history to fetch new records. **More options** holds subreddit and score protection, text matching, local archive import, login status, and history clearing.
+## Filters and older history
 
-Speed is automatic: at most eight requests per minute, including every account check, history page, edit, delete, and verification read. The tool slows further when Reddit reports less remaining allowance. Timing is shared across toolbox tabs on the same origin and remembered across reloads; old speed preferences are ignored. Reddit can apply additional shared or account-specific limits, so cooldowns remain automatic.
+**More options** includes subreddit exclusions, score protection, text matching, and archive import. Link and media posts are excluded unless explicitly enabled; they have no body to overwrite. Post titles remain unchanged.
 
-Drag the header to move the window; drag either bottom corner to resize it. The RT launcher can also be moved. Size and position are remembered. The header reset button restores the default layout. Keyboard users can focus the move or resize handle and use arrow keys; hold Shift for larger changes.
+Reddit profile listings can omit older items. Import comments.csv or posts.csv from your Reddit data archive to include more history. Files are processed locally. No limit includes all discovered matches, not necessarily every item ever posted.
 
-Archive import and paginated review work while signed out. After signing in normally, **Check login** binds the local review to that account. Unknown protected archive fields are retained. Link/media posts are skipped unless **Also delete link and media posts** is enabled; their bodies cannot be overwritten, and post titles stay unchanged.
+## Privacy
 
-## Controls and recovery
+No telemetry, backend, or remote code. Only preferences and anonymous pacing deadlines are saved automatically. Content and run progress stay in the tab unless you export them. Deleting from Reddit cannot erase third-party copies or guarantee removal from Reddit's internal backups. [Privacy details](docs/PRIVACY.md) · [Security](SECURITY.md).
 
-- **Pause** holds before the next mutation. **Stop** finishes the current item, then stops the remainder.
-- **Review retries** collects failed and stopped items into a new review. Completed items are excluded from later selections in this tab.
-- A previously removed comment is also confirmed when our accepted deletion changes its verified owner to [deleted], even if Reddit keeps the [removed] body placeholder. A removed body alone is insufficient.
-- A deletion is otherwise counted after a deleted marker, or an accepted deletion of a verified owned item followed by two consecutive valid reads that no longer return it. Missing data alone is insufficient.
-- If an accepted deletion leaves the same owned, overwritten item present, the script verifies the account, ownership, and replacement again before one bounded retry. A lost response is never blindly resent.
-- Unconfirmed deletions are marked **Needs recheck** and the batch continues. **Recheck results** performs reads only. These items are never counted as deleted until verified.
-- Account/ownership changes, challenges, and uncertain overwrites still require attention. Rate-limit waits use Reddit’s reset headers and recover automatically, including when starting or resuming. Requests remain serialized and paced.
-- Cleanup uses **www.reddit.com** and a Web Lock excludes concurrent batches. Reloading clears the run and never resumes deletion automatically.
+## Development
 
-Profile listings can omit older history. Archives broaden discovery but do not establish lifetime completeness. Overwriting/deleting cannot erase third-party copies or guarantee Reddit's internal retention.
+Use Node.js 20 or newer:
 
-## Privacy and development
+```sh
+npm ci
+npm run check
+```
 
-Only preferences and anonymous request/cooldown deadlines are saved. The session action token, imported content, reviewed batches, replacements, and progress stay in memory unless you explicitly export content or a sanitized run log. There is no telemetry, remote code, or external cleanup service. [Privacy](docs/PRIVACY.md) · [Security](SECURITY.md).
-
-Node.js 20+ is needed only to develop the script. Run `npm ci` followed by `npm run check`; installation needs neither. The deterministic build has no runtime dependencies and generates `SHA256SUMS.txt`. [Architecture](docs/ARCHITECTURE.md) · [Reference tools](docs/SOURCES.md).
+The build combines the source into one userscript and writes its SHA-256 checksum. [Architecture](docs/ARCHITECTURE.md) · [Verification](docs/RELEASE_CHECKLIST.md) · [References](docs/SOURCES.md) · [Contributing](CONTRIBUTING.md).
 
 MIT licensed. Copyright (c) 2026 [slaveofsolace](https://github.com/slaveofsolace). Not affiliated with Reddit.

@@ -28,7 +28,7 @@
     <aside class="panel" id="rt-panel" role="dialog" aria-label="Reddit Toolbox" aria-modal="false">
       <header class="header">
         <button class="icon-button move-window" type="button" aria-label="Move window" title="Drag to move. Arrow keys move; Shift moves farther.">⠿</button>
-        <div class="brand"><strong>Reddit Toolbox</strong><span>Your Reddit history <small>RC7</small></span></div>
+        <div class="brand"><strong>Reddit Toolbox</strong><span>Your Reddit history <small>RC8</small></span></div>
         <button class="icon-button reset-window" type="button" aria-label="Reset window layout" title="Reset size and position">↺</button>
         <button class="icon-button close" type="button" aria-label="Close">✕</button>
       </header>
@@ -76,7 +76,7 @@
         <div class="batch-summary" hidden aria-live="polite"><span><strong class="deleted-count">0</strong> deleted</span><span><strong class="unconfirmed-count">0</strong> need recheck</span><span><strong class="failed-count">0</strong> failed</span></div>
         <div class="current-action" hidden></div><progress class="progress" value="0" max="1" aria-label="Cleanup progress" hidden></progress>
         <div class="status-line run-status" role="status">Find items to get started.</div>
-        <p class="delete-note" hidden>Editable text is overwritten first. Deletion is permanent.</p>
+        <p class="delete-note" hidden>Editable text is overwritten first. Deletion is permanent. Keep this tab open until cleanup finishes.</p>
         <div class="actions run-actions"><button class="button danger start" type="button" disabled>Delete selected items</button><button class="button pause" type="button" hidden>Pause</button><button class="button stop" type="button" title="Finish the current item, then stop" hidden>Stop</button><button class="button recheck" type="button" hidden>Recheck results</button><button class="button retry" type="button" hidden>Review retries</button></div>
       </footer>
       <button class="resize-handle resize-left" data-edge="left" type="button" aria-label="Resize window from left" title="Drag to resize. Arrow keys also resize.">◢</button>

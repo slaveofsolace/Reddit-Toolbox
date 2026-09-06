@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.0-rc.8 — 2026-09-06
+
+- Shorten installation and recovery instructions; remove obsolete references to speed controls.
+- Remind users to keep the Reddit tab open before starting deletion.
+- Replace internal development handoff notes with a focused release checklist and preserve reference credits.
+- Keep request pacing and deletion verification unchanged.
+- Validate the installed RC7 deletion engine with a complete 97-comment run: 97 confirmed deletions, no failures or unresolved results, and zero comments found by a fresh profile-history scan.
+
 ## 1.0.0-rc.7 — 2026-09-05
 
 - Pace every request automatically, including scans, account checks, overwrite/deletion requests, and verification reads. The fixed 7.5-second minimum interval leaves headroom below the historical non-OAuth allowance; low remaining budgets slow the tool further before exhaustion.

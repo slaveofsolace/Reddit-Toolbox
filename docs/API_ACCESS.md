@@ -1,6 +1,6 @@
 # Existing Reddit session
 
-RC7 runs directly inside the Reddit page using the account already signed in to that tab. There is no OAuth registration, consent popup, client ID, API key, client secret, password field, or external service to configure.
+Reddit Toolbox runs directly inside the Reddit page using the account already signed in to that tab. There is no OAuth registration, consent popup, client ID, API key, client secret, password field, or external service to configure.
 
 ## Use
 

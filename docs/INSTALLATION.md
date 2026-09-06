@@ -1,44 +1,39 @@
 # Installation
 
-Install the single RC7 userscript. Your normal Reddit login is the only account setup.
+1. Install [Tampermonkey](https://www.tampermonkey.net/) and enable userscripts when prompted.
+2. Open [Reddit Toolbox](https://raw.githubusercontent.com/slaveofsolace/Reddit-Toolbox/main/userscripts/reddit-toolbox.user.js) and select **Install**.
+3. Sign in at [www.reddit.com](https://www.reddit.com/), reload once, and open **RT**.
 
-## Install
+Your existing Reddit login is all you need. [Session details](API_ACCESS.md).
 
-1. Install [Tampermonkey](https://www.tampermonkey.net/) and follow its prompt to enable userscripts if needed.
-2. Open [Install Reddit Toolbox](https://raw.githubusercontent.com/slaveofsolace/Reddit-Toolbox/main/userscripts/reddit-toolbox.user.js) and select **Install**.
-3. Sign in normally at [www.reddit.com](https://www.reddit.com/), reload the tab, and open **RT**.
+## Delete a batch
 
-No registered app, OAuth authorization, client ID, or API key is needed. [Session details](API_ACCESS.md).
+Choose comments or posts, dates, and **No limit** or **Set a limit**. Select **Find matching items**, review the results, then select **Delete N items**. **Keep** excludes an item. **Save a copy** exports the selection before deletion.
 
-## Clean up
+Editable bodies are overwritten, checked, deleted, and verified. Deletion is permanent. Keep the Reddit tab open and your computer awake until the batch finishes. Closing the panel is fine; the RT button shows progress. Closing or reloading the tab discards the run, which never resumes automatically.
 
-1. Choose comments, posts, dates, **No limit** or **Set a limit**, and order. Select **Find matching items**.
-2. Review the matches. **Keep** excludes a row and **Save a copy** exports the selection. Select **Delete N items** to start.
+Speed is automatic and includes scans, edits, deletions, and verification. A comment takes several requests; large batches can take hours. Reddit cooldowns are handled automatically.
 
-Editable bodies are overwritten, read back, deleted, and verified automatically. Deletion is permanent. There is no typed phrase, separate preparation step, or per-item confirmation. Filter changes update the review automatically.
+## Adjust the selection or panel
 
-**More options** contains subreddit and score protection, text matching, pacing, archive import, login status, and history clearing. Link/media posts have no editable body and are skipped unless **Also delete link and media posts** is enabled. Titles stay unchanged.
+**More options** includes subreddit exclusions, score protection, text matching, archive import, login status, and clearing loaded history. Link and media posts are skipped unless **Also delete link and media posts** is enabled. Their bodies cannot be overwritten; titles remain unchanged.
 
-## Move and resize
+Drag the header to move the panel or either bottom corner to resize it. The RT launcher is movable too. Layout is saved; the header reset button restores it. Arrow keys move or resize a focused handle; Shift makes larger changes.
 
-Drag the header to move the panel, or either bottom corner to resize it. Drag the RT launcher to reposition it. Layout is saved automatically; the header reset button restores the default. Focus a move/resize handle and use arrow keys for keyboard control; Shift moves farther.
+## Recover from an interruption
 
-The footer keeps Delete, progress, and run controls accessible while the history scrolls. Closing the panel leaves the batch running and the launcher shows its progress. Keep the Reddit tab open; reloading ends the in-memory run and never resumes deletion automatically.
+**Pause** holds before the next mutation. **Stop** finishes the current item and stops the remainder. **Review retries** prepares failed and stopped items for review.
 
-## Recovery
+**Needs recheck** items are not counted as deleted. **Recheck results** checks them without resending deletion. If the tab was closed, reopen Reddit and scan again to review what is still present. An old progress count cannot establish the final result.
 
-**Pause** holds before the next mutation. **Stop** finishes the current item and stops the remainder. **Review retries** collects failed and stopped items into another review.
+## Import older history
 
-Unconfirmed deletion results show **Needs recheck**, remain separate from deleted counts, and allow other items to continue. **Recheck results** performs read-only verification. See [the result rules](ARCHITECTURE.md#uncertain-outcomes).
+Reddit profile listings can omit content. Download your Reddit data archive, extract it, then select **More options → Import archive CSV** and choose comments.csv, posts.csv, or both. Files are processed locally.
 
-## Include older history
+You can review an archive while signed out. After signing in, select **Check login** to bind the review to your account.
 
-Profile listings can omit older content. Request your data from Reddit's settings, download and extract the archive, then use **More options → Import archive CSV** to select comments.csv, posts.csv, or both. Import automatically builds a paginated review. Files are parsed locally and are not uploaded by this tool.
+## Update or uninstall
 
-Signed-out archive review is available. Sign in normally, then select **Check login** in More options to enable deletion for that account.
+Finish or stop any active run before updating. Reopen the install link and select **Update**, then reload Reddit. Preferences are retained and speed is automatic.
 
-## Update or remove
-
-Reopen the install link and select **Update**, or let Tampermonkey use the script's update URL. RC7 keeps the same name, namespace, and permissions as RC6. Speed is now automatic; old speed preferences are ignored. Reload Reddit after an update to use the new version; finish or stop any old run first because a reload discards its in-memory progress.
-
-To uninstall, remove **Reddit Toolbox** through Tampermonkey. Uninstalling cannot reverse completed Reddit edits or deletions.
+Remove **Reddit Toolbox** through Tampermonkey to uninstall. This cannot reverse completed edits or deletions.
