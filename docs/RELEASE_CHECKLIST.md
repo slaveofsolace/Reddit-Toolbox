@@ -30,8 +30,10 @@ The owner-authorized 97-comment batch completed on installed RC7 on September 6,
 - [x] 99 Node tests, build integrity, and isolated Chromium/Firefox checks pass for the RC8 artifact.
 - [x] The authorized 97-comment run completes with 97 deleted and zero remaining, failed, unconfirmed, or skipped.
 - [x] A fresh read-only history scan checks for remaining comments: zero found.
-- [ ] Public userscript and checksum match the released artifact; CI passes.
+- [x] Public userscript and checksum match the released artifact; CI passes.
 
 RC8 changes documentation and the pre-run tab reminder; the mutation and pacing code is unchanged. Live acceptance on RC7 does not prove installation of RC8. Live post deletion, interruption recovery, and fresh Firefox installation remain unverified.
 
 RC8 artifact: 152,493 bytes; SHA-256 a0c6839d80a75752e48e41bb4c968253d08641dc7a03511f44d288f495be588e.
+
+Published to main in fa0472f on September 6, 2026. Both [CI](https://github.com/slaveofsolace/Reddit-Toolbox/actions/runs/34024483733) and [Build userscript](https://github.com/slaveofsolace/Reddit-Toolbox/actions/runs/34024483467) passed for that commit. The public main userscript and checksum were independently fetched and matched at 09:23 UTC.
