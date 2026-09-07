@@ -2,7 +2,7 @@
 
 ## Supported version
 
-Security fixes currently target `1.0.0-rc.7` until a stable release replaces it.
+Security fixes currently target `1.0.0-rc.8` until a newer release replaces it.
 
 ## Reporting
 
